@@ -32,8 +32,8 @@ X热点
 #   xiaohan  晓涵（温婉）
 #   xiaorui  晓睿（学术知性）
 #   xiaoyou  晓悠（温柔）
-voice=yunxi
+voice=xiaoxiao
 
 # —— 朗读语速（嫌快调小，嫌慢调大；只改这一行）——
 # 例：rate=-10% 慢一点 ｜ rate=+15% 快一点 ｜ 恢复默认写 +0%
-rate=+0%
+rate=+10%
