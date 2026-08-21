@@ -3,7 +3,7 @@
 ## 📌 AI
 - [申万宏源研报指路企业AI落地路径，深演智能(2723.HK)已率先进入Production](https://news.google.com/rss/articles/CBMib0FVX3lxTFBJYlhLekU0a3V5aXVrS3R6REU5Z3lLUzNZTTlpWW9OdllDVTd5WW9QVkFSbFVhOWR6dGkwa0VUTVpWSXpRTEEwNHN0SG53TmI0c0VJY01QUGNmSEVkVVFEVm42TUpDTDRaZ21zRmdPNA?oc=5) — finance.sina.com.cn
 - [AI数字化修复文物会改变文物原貌吗？](https://news.google.com/rss/articles/CBMifkFVX3lxTFBrcW9RX2hidWxKZEk0bGVTdUNxZGR3ZVhZbHFBMm5ZY0xvNm1EX0dTUDkyd3B2eXFydWxsamp6Z19hZ2Zib0FVVnI0bVdBVG03S3lCRHBzS1kza1huZ3Z5NUJhZTFWWUdpLU5EVGJzS2VDNVI5UU92YTB2Si1sdw?oc=5) — 手机新浪网
-- [CodexHarness开源 驱动AI智能体革命](https://news.google.com/rss/articles/CBMicEFVX3lxTE9jby10N2RUNzdINnBjc1BRY1BCMmt2T050YnFndy1iOWlscjluOWR4UHlfTmRlVFcyRXVhVDZQTElfUWtHZTdZZC15aE1HSnpDbC1HQVo0azl5eTFTNnlTSEtRQk9BbzgtRmw4VTI3bU4?oc=5) — 中华网
+- [中消协点名AI客服投诉增多 消费者维权难升级](https://news.google.com/rss/articles/CBMicEFVX3lxTE9VQzNIZWNHNDZ3dFFKQVVucVlLUldOM2VRTGRySy1XbWthNHZPdkFabFpMMkdvM09OMU9Ja3drSVpFRGY1Vm9Ed05nbFdnclk4NE1Zd2RJSmJLUmxwcG04T21xdlhyYWFGWTAtZ2dzWDE?oc=5) — 中华网
 - [美光CEO：AI彻底打破“内存兴衰周期” 数据中心相关供应缺口超50%！](https://news.google.com/rss/articles/CBMiYEFVX3lxTE9kWXpuQmV1c0Z1UTVtbE5PWVFzaXJwVnlEc09nZy05Y015dm5SUElRN2tNaHY4M1RoMGp0bXJUd2pBbUFuNndjcHRqM2k0bkVTQmU2ZldEcm53OHYycnNkSA?oc=5) — 东方财富
 
 ## 📌 DOTA2
@@ -24,7 +24,7 @@
 - 道琼斯 收报 52,759.21，-1.32%
 
 ## ₿ 比特币
-- 比特币 ≈ $75,329（≈¥506,379），24h +8.66%
+- 比特币 ≈ $75,372（≈¥506,658），24h +8.67%
 
 ## 🪙 黄金 / 白银（水贝价）
 _今日金价获取失败，请稍后手动查看。_
