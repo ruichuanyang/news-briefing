@@ -6,14 +6,14 @@
 - 纳斯达克 收报 26,067.17，-1.00%
 - 道琼斯 收报 52,759.21，-1.32%
 ### 比特币
-- 比特币 ≈ $75,482（≈¥507,393），24h +8.10%
+- 比特币 ≈ $75,469（≈¥507,301），24h +8.14%
 ### 黄金白银
 _今日金价获取失败，请稍后手动查看。_
 
 ## 📌 游戏
 ### DOTA2
-- [《DOTA2》TI15上海开幕，首日赛果出炉](https://news.google.com/rss/articles/CBMiiAFBVV95cUxQTkRDOGFGTjBqeUpmam5SY0VnWEpwa0NxVENzcUVaUGc5ZVNXNk5CUnlIYWRmM3RrY3lrdTVsTkFHVGFGaU1iaUY2UkRQV3pKX0tfZG1ndU9oUnNwelZ3YUFSZzZOVDNZOFR3eG1UNVJGLWRLNldXXzlzUS1kS0lkMFR6YTQzOG9r?oc=5) — 搜狐网
-- [《DOTA2》TI15 上海开幕：Spirit 晋级胜者组半决赛，Liquid、Falcons 跌入败者组](https://news.google.com/rss/articles/CBMif0FVX3lxTFBucGE4RTBEdlo4ODJHSFY2eEV3S010eDQ3bWNTWUhlT2RxY1cwZWR1b2hzZU5zSExIV3dkc0xHSFplYkMtRFVmYWkwcmNKY3E3OHRJQS1WMEZCZ0dLWEx0OTVydFlCQzROS0pKeGp0ejZEUWN6cl8yZWExcm12WTA?oc=5) — 新浪财经
+- [《DOTA2》TI15上海开幕，首日赛果出炉](https://news.google.com/rss/articles/CBMi-wFBVV95cUxNeWtXeWxBMDcwdlFCUWkzNHppMnNyRWlrWlU4UnlwYTBBd0x5QWdFWmRkRURiNWNlMmlKUlFqLTE2RWZ0TFRWSERxMkhOMmZXNmFGN3BTZlk0MHBHVkVCM3I3X3RlU1otMlpQaEkwSmFsQkRUNUlPVWdsSFRrMS1JNnRkbm9TbjNFbENZeFNGTHRnX09ZV3F0cWhMV1kyTnVQMmhPSFlmUHdsSDd4SEY4c2dRaGszYWVjOC1LOG9SVlNUblplY1VxRW5yeVZwZTdzMXNGdEpCMzcxUzgzTnNwU1BoM3JqQUp1TlpFbjFfNHJKTUF5eU9hQjZCTQ?oc=5) — 搜狐网
+- [《DOTA2》TI15 上海开幕：Spirit 晋级胜者组半决赛，Liquid、Falcons 跌入败者组](https://news.google.com/rss/articles/CBMif0FVX3lxTFBucGE4RTBEdlo4ODJHSFY2eEV3S010eDQ3bWNTWUhlT2RxY1cwZWR1b2hzZU5zSExIV3dkc0xHSFplYkMtRFVmYWkwcmNKY3E3OHRJQS1WMEZCZ0dLWEx0OTVydFlCQzROS0pKeGp0ejZEUWN6cl8yZWExcm12WTA?oc=5) — finance.sina.com.cn
 - [TI2026上海开战！高帧畅玩DOTA2，RTX50系显卡火力拉满](https://news.google.com/rss/articles/CBMieEFVX3lxTE1NVTdFdzdBRGZLVmpPM1A0Z3hJN3c4TDlKTjZPQWhHanRuUTY2VEhObWVjNFlqOWdZbWswUDgyT2JaaVphVGNFRTNnUjM4dTJneFFSMGRvVEFRaEY1U0JmSjV3OGRCTEZveGlaQnVqckxfaHR1dE1rOQ?oc=5) — finance.sina.com.cn
 ### 单机游戏
 - [外媒呼吁单机游戏内置作弊器！就像《金沙扑克游戏》](https://news.google.com/rss/articles/CBMiXkFVX3lxTFBPcC1sVTF4TlY0VnJYMFU0V0tYZTZpSjc4UzhDa2pjS3g0dW5ET25QcHJGd3E5VEFud2tTY0haTk5jbE5tRmtubHh2Smdzc2RBcEp5OHpyT2piUU01R0E?oc=5) — womenofchina.com
