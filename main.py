@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-每日新闻播报 bot —— 口播模式（重制版 v6）
+每日新闻播报 bot —— 文章体重写版 (v7)
 
-要点：
-1. 所有新闻用 Google News 中文 RSS（hl=zh-CN），天然无 HTML、无英文标题。
-2. clean_text 多道清洗：去 HTML 标签 + 去残留标签碎片(a href= /a font color= #6f6f6f)
-   + 去网址 + 去广告词，保证「朗读绝不念出代码/符号/网址」。
-3. 数据只抓一次，文字版(md)与音频版(speech)用同一份数据渲染，逐字一致。
-4. 免费：Edge TTS 朗读 + Server酱推微信 + GitHub Actions 定时。
+解决 three 个问题：
+1) 数据源加固：美股改 stooq(带 Yahoo 兜底)，贵金属改 gold-api + 汇率接口，
+   微博热搜多源兜底；任一路拿不到就「安静跳过」，不再出现"暂时获取不到"的破句。
+2) 彻底去掉消息来源：标题里的"新浪新闻_手机新浪网""上海交通大学 新闻网"等
+   后缀一律剥掉，全文/音频都不写不读。
+3) 话术重写：按"写一篇能听下去的文章"来组织，板块之间自然衔接，
+   不再满屏"接下来的"，条目之间用多变的自然连接词串成连贯叙述。
 """
 
 import os
@@ -37,15 +38,15 @@ VOICE_MAP = {
     "xiaomo": "zh-CN-XiaomoNeural",      # 晓墨 女声
 }
 
-# 广告/营销词，命中则整段剔除或替换
+# ---------------- 文本清洗 ----------------
 CLICKBAIT = re.compile(r"(震惊|突发|速看|重磅|全网|疯传|不敢相信|万万没想到|"
                        r"点击(此处|这里|查看)|阅读原文|关注我们|扫码|福利|限时|"
                        r"夺宝|娱乐网址|博彩|彩票|澳门|现金)", re.I)
 
-TAG_RE = re.compile(r"<\s*/?[a-zA-Z][^>]*>")                       # <a ...> </a> 等完整标签
+TAG_RE = re.compile(r"<\s*/?[a-zA-Z][^>]*>")
 ATTR_RE = re.compile(r"(?i)\b(?:href|target|rel|src|alt|style|color|"
-                     r"width|height|class|id|title|align)\s*=\s*[^ \n<>,]*")  # href= target= color=
-HEX_RE = re.compile(r"#\s*[0-9a-fA-F]{3,8}")                       # #6f6f6f
+                     r"width|height|class|id|title|align)\s*=\s*[^ \n<>,]*")
+HEX_RE = re.compile(r"#\s*[0-9a-fA-F]{3,8}")
 URL_RE = re.compile(r"https?://\S+|www\.\S+")
 STRAY_RE = re.compile(r"(?i)\b(?:/?(?:a|font|span|div|br|img|p|b|i|"
                       r"u|strong|em|table|tr|td|li|ul|ol|h[1-6]))\b")
@@ -56,23 +57,54 @@ def clean_text(s):
     if not s:
         return ""
     s = html.unescape(s or "")
-    s = TAG_RE.sub(" ", s)          # 1) 完整 HTML 标签（带尖括号）
-    s = ATTR_RE.sub(" ", s)         # 2) 残留属性碎片 href= target= color=
-    s = HEX_RE.sub(" ", s)          # 3) 十六进制颜色
-    s = URL_RE.sub(" ", s)          # 4) 网址
-    s = CLICKBAIT.sub(" ", s)       # 5) 广告词
-    s = STRAY_RE.sub(" ", s)        # 6) 孤立标签名 /a /font a font ...
+    s = TAG_RE.sub(" ", s)
+    s = ATTR_RE.sub(" ", s)
+    s = HEX_RE.sub(" ", s)
+    s = URL_RE.sub(" ", s)
+    s = CLICKBAIT.sub(" ", s)
+    s = STRAY_RE.sub(" ", s)
     s = s.replace(" /a", "").replace("/a", "")
     s = s.replace(" /font", "").replace("/font", "")
-    s = re.sub(r"[<>]", " ", s)     # 7) 任何剩漏的尖括号
-    s = re.sub(r"(?i)\b_?blank\b|\b_self\b", " ", s)        # 8) _blank / _self
-    s = re.sub(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b", " ", s, flags=re.I)  # 9) 域名
-    s = re.sub(r"\s*/\s*", " ", s)  # 10) 孤立斜杠
+    s = re.sub(r"[<>]", " ", s)
+    s = re.sub(r"(?i)\b_?blank\b|\b_self\b", " ", s)
+    s = re.sub(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b", " ", s, flags=re.I)
+    s = re.sub(r"\s*/\s*", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
-# ---------- 数字中文播报 ----------
+# 常见来源词（作为标题尾巴时一律剥除，绝不写出/读出）
+SOURCE_FRAGS = [
+    "新浪新闻", "手机新浪网", "新浪财经", "新浪网", "新浪科技", "新浪体育",
+    "新闻网", "澎湃新闻", "澎湃", "腾讯网", "腾讯新闻", "腾讯科技", "腾讯体育",
+    "网易新闻", "网易", "搜狐新闻", "搜狐网", "搜狐", "新华网", "新华每日电讯",
+    "人民网", "央视新闻", "央广网", "中国新闻网", "环球网", "环球时报",
+    "参考消息", "联合早报", "光明网", "海外网", "界面新闻", "第一财经",
+    "证券时报", "财新网", "财新", "36氪", "钛媒体", "IT之家", "新京报",
+    "北京日报", "上观新闻", "南方都市报", "中国青年网", "科技日报", "科学网",
+    "北京大学", "清华大学", "上海交通大学 新闻网", "复旦大学", "浙江大学",
+    "中国日报", "经济日报", "工人日报", "人民日报", "央视网", "观察者网",
+    "凤凰网", "凤凰资讯", "东方网", "红星新闻", "封面新闻", "极目新闻",
+    "上游新闻", "九派新闻", "潇湘晨报", "扬子晚报", "钱江晚报", "澎湃讯",
+]
+
+
+def strip_source(title, src):
+    """去掉标题里夹带的消息来源，保证文章里不出现'新浪新闻'之类的字眼。"""
+    title = (title or "").strip()
+    if src:
+        for sep in [" - ", " _ ", "｜", " | ", "—", " – ", " -- "]:
+            suf = sep + src
+            if title.endswith(suf):
+                title = title[: -len(suf)].strip()
+                break
+    for frag in SOURCE_FRAGS:
+        if title.endswith(frag):
+            title = title[: -len(frag)].strip()
+    return title.strip(" -_｜|—– \t")
+
+
+# ---------------- 数字中文播报 ----------------
 DIGITS = "零一二三四五六七八九"
 UNITS = ["", "十", "百", "千"]
 
@@ -91,11 +123,9 @@ def _group4(n):
 
 
 def _int2cn(num):
-    if num == 0:
-        return "零"
     s = ""
     if num >= 100000000:
-        s += _int2cn(num // 100000000) + "亿"
+        s = _int2cn(num // 100000000) + "亿"
         num %= 100000000
         if num == 0:
             return s
@@ -121,11 +151,13 @@ def num2cn(x):
     x = abs(x)
     intpart = int(x)
     frac = x - intpart
-    s = _int2cn(intpart)
+    s = _int2cn(intpart) if intpart else ""
     if frac and frac > 0:
         dec = f"{frac:.2f}".split(".")[1].rstrip("0")
         if dec:
-            s += "点" + "".join(DIGITS[int(c)] for c in dec)
+            s = (s if s else "零") + "点" + "".join(DIGITS[int(c)] for c in dec)
+    if not s:
+        s = "零"
     return ("负" if neg else "") + s
 
 
@@ -133,27 +165,48 @@ def count2cn(n):
     return {1: "一", 2: "两", 3: "三", 4: "四", 5: "五"}.get(n, num2cn(n))
 
 
-# ---------- 数据源（全部免费、无需 key）----------
+# ---------------- 数据源（全部免费、无需 key）----------------
 
 def fetch_stocks():
-    syms = [("道琼斯", "^DJI"), ("标普五百", "^GSPC"), ("纳斯达克", "^IXIC")]
+    """美股三大指数：stooq 日线算涨跌，失败则 Yahoo 兜底。"""
+    syms = [("道琼斯", "^dji"), ("标普500", "^spx"), ("纳斯达克", "^ixic")]
+    yahoo_map = {"^dji": "^DJI", "^spx": "^GSPC", "^ixic": "^IXIC"}
     out = []
+
+    def _stooq(sym):
+        r = requests.get(f"https://stooq.com/q/d/l/?s={sym}&i=d", timeout=15)
+        lines = [l for l in r.text.strip().splitlines()
+                 if l and not l.lower().startswith("date")]
+        if len(lines) < 2:
+            raise ValueError("no data")
+        close = float(lines[-1].split(",")[4])
+        prev = float(lines[-2].split(",")[4])
+        return close, (close - prev) / prev * 100
+
+    def _yahoo(sym):
+        r = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{yahoo_map.get(sym, sym)}?range=1d&interval=1d", timeout=15)
+        j = r.json()["chart"]["result"][0]
+        price = j["meta"]["regularMarketPrice"]
+        prev = j["meta"].get("chartPreviousClose") or j["meta"].get("previousClose")
+        return price, (price - prev) / prev * 100
+
     for name, sym in syms:
-        try:
-            r = requests.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
-                f"?range=1d&interval=1d", timeout=15)
-            j = r.json()["chart"]["result"][0]
-            price = j["meta"]["regularMarketPrice"]
-            prev = j["meta"].get("chartPreviousClose") or j["meta"].get("previousClose")
-            chg = (price - prev) / prev * 100 if prev else 0
-            out.append((name, price, chg))
-        except Exception as e:
-            print(f"[stock] {sym} 失败: {e}")
+        val = None
+        for fn in (_stooq, _yahoo):
+            try:
+                val = fn(sym)
+                break
+            except Exception as e:
+                print(f"[stock][{name}] {fn.__name__} 失败: {e}")
+        if val:
+            out.append((name, val[0], val[1]))
     return out
 
 
 def fetch_btc():
+    # 主源 coingecko；兜底 coinbase(美元现货) + er-api(美元兑人民币)
     try:
         r = requests.get(
             "https://api.coingecko.com/api/v3/simple/price"
@@ -162,30 +215,39 @@ def fetch_btc():
         d = r.json()["bitcoin"]
         return (d["usd"], d["cny"], d["usd_24h_change"])
     except Exception as e:
-        print(f"[btc] 失败: {e}")
+        print(f"[btc] coingecko 失败: {e}")
+    try:
+        usd = float(requests.get(
+            "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+            timeout=15).json()["data"]["amount"])
+        fx = requests.get("https://open.er-api.com/v6/latest/USD",
+                          timeout=15).json()
+        cny = usd * float(fx["rates"]["CNY"])
+        return (usd, cny, 0.0)
+    except Exception as e:
+        print(f"[btc] coinbase 失败: {e}")
         return None
 
 
 def fetch_metals():
-    """水贝金价/银价：用新浪基础金价(AU9999,元/克) + 伦敦银换算，估算水贝批发价。"""
+    """贵金属：gold-api 拿国际金价/银价(美元/盎司)，再按汇率折算人民币克价。"""
     try:
-        hd = {"Referer": "https://finance.sina.com.cn/"}
-        gold = float(requests.get("https://hq.sinajs.cn/list=AU9999",
-                                  headers=hd, timeout=15).text.split(",")[1])
-        ag = float(requests.get("https://hq.sinajs.cn/list=hf_AG",
-                                headers=hd, timeout=15).text.split(",")[1])
-        usdcny = float(requests.get("https://hq.sinajs.cn/list=USDCNY",
-                                    headers=hd, timeout=15).text.split(",")[1])
-        ag_cny = ag / 31.1035 * usdcny
-        shuibei_gold = gold + 18  # 水贝足金批发价≈基础金价+约18元工费
-        return (str(round(shuibei_gold)), str(round(ag_cny, 1)), str(round(gold)))
+        g = requests.get("https://api.gold-api.com/price/XAU", timeout=15).json()
+        s = requests.get("https://api.gold-api.com/price/XAG", timeout=15).json()
+        fx = requests.get("https://open.er-api.com/v6/latest/USD", timeout=15).json()
+        usdcny = float(fx["rates"]["CNY"])
+        g_cny_g = float(g["price"]) / 31.1035 * usdcny      # 国内基础金价 元/克
+        s_cny_g = float(s["price"]) / 31.1035 * usdcny      # 足银 元/克
+        base = round(g_cny_g)
+        shuibei = base + 15                                 # 水贝足金批发≈基础+工费
+        return (str(base), str(shuibei), str(round(s_cny_g, 1)))
     except Exception as e:
         print(f"[metal] 失败: {e}")
         return None
 
 
 def fetch_news(q, max_items=3):
-    """Google News 中文 RSS，天然无 HTML、无英文标题。"""
+    """Google News 中文 RSS；标题剥来源，绝不带回'新浪新闻'等字眼。"""
     try:
         url = (f"https://news.google.com/rss/search?q={quote(q)}"
                f"&hl=zh-CN&gl=CN&ceid=CN:zh-Hans")
@@ -193,16 +255,14 @@ def fetch_news(q, max_items=3):
         root = ET.fromstring(r.content)
         out = []
         for it in root.findall(".//item"):
-            title = clean_text(it.findtext("title", ""))
-            desc = clean_text(it.findtext("description", ""))
-            src = clean_text(it.findtext("source", ""))
-            link = it.findtext("link", "") or ""
-            if not title:
+            raw_title = it.findtext("title", "")
+            raw_desc = it.findtext("description", "")
+            raw_src = it.findtext("source", "")
+            title = strip_source(clean_text(raw_title), clean_text(raw_src))
+            desc = clean_text(raw_desc)
+            if not title or CLICKBAIT.search(title):
                 continue
-            # 去掉标题末尾 " - 来源" 这类尾巴
-            if src and title.endswith(f" - {src}"):
-                title = title[: -(len(src) + 3)].strip()
-            out.append((title, desc, src, link))
+            out.append((title, desc))
             if len(out) >= max_items:
                 break
         return out
@@ -211,19 +271,45 @@ def fetch_news(q, max_items=3):
         return []
 
 
-def fetch_weibo_hot(max_items=3):
-    try:
-        r = requests.get("https://api.vvhan.com/api/hotlist/wbHot", timeout=15)
-        data = r.json().get("data", [])
-        out = []
-        for d in data[:max_items]:
-            t = clean_text(d.get("title", ""))
-            if t and not CLICKBAIT.search(t):
-                out.append((t, "", "微博热搜", ""))
-        return out
-    except Exception as e:
-        print(f"[weibo] 失败: {e}")
-        return []
+def fetch_weibo_hot(max_items=5):
+    """微博热搜：多源兜底。拿不到就返回空列表（安静跳过，不报错句）。"""
+    candidates = []
+
+    def _grab(getter):
+        try:
+            return getter()
+        except Exception as e:
+            print(f"[weibo] 源失败: {e}")
+            return []
+
+    def src_vvhan():
+        r = requests.get("https://api.vvhan.com/api/hotlist/wbHot", timeout=12)
+        return [clean_text(d.get("title", "")) for d in r.json().get("data", [])]
+
+    def src_tenapi():
+        r = requests.get("https://tenapi.cn/v2/weibohot", timeout=12)
+        return [clean_text(d.get("title", "")) for d in r.json().get("data", [])]
+
+    def src_official():
+        r = requests.get("https://weibo.com/ajax/side/hotSearch",
+                         headers=UA, timeout=12)
+        return [clean_text(d.get("word", ""))
+                for d in r.json().get("data", {}).get("realtime", [])]
+
+    for src in (src_vvhan, src_tenapi, src_official):
+        candidates = _grab(src)
+        if candidates:
+            break
+
+    out, seen = [], set()
+    for t in candidates:
+        if not t or CLICKBAIT.search(t) or t in seen:
+            continue
+        seen.add(t)
+        out.append((t, ""))
+        if len(out) >= max_items:
+            break
+    return out
 
 
 MOM_TIPS = [
@@ -242,13 +328,13 @@ MOM_TIPS = [
 ]
 
 
-def fetch_mom_tips(max_items=1):
+def fetch_mom_tips():
     day = datetime.datetime.now().day
     tip = MOM_TIPS[day % len(MOM_TIPS)]
-    return [(tip, "", "母婴小知识", "")]
+    return [(tip, "")]
 
 
-# ---------- 口播渲染 ----------
+# ---------------- 文章体叙述 ----------------
 
 CATS = [
     ("财经", ["美股", "比特币", "黄金白银", "A股", "港股", "基金", "原油", "外汇", "债券"]),
@@ -260,71 +346,114 @@ CATS = [
     ("物理", ["物理", "物理学", "物理学前沿", "科学前沿"]),
 ]
 
-TRANS = {
-    "财经": "先来关注财经要闻。",
-    "游戏": "接下来，我们把目光转向游戏圈。",
-    "娱乐": "听完游戏圈的消息，我们再把目光投向国内娱乐圈。",
-    "国际": "接下来，把视线转向国际，看看海外都在关注什么。",
-    "母婴": "忙碌之余，也来听一段孕期实用小知识。",
-    "AI": "接下来，来关注人工智能领域的最新动态。",
-    "物理": "节目的最后，我们再用一则科学前沿消息收尾。",
+# 各板块开场白：直接切题，绝不用"接下来"
+OPENERS = {
+    "游戏": {
+        "DOTA2": "电竞这块先说《DOTA2》，今天有几条值得一聊的消息。",
+        "单机游戏": "单机游戏这边，",
+        "_default": "游戏行业还有这些动向：",
+    },
+    "国际": {"_default": "再把视野放到海外，今天国际上有几个看点。"},
+    "AI": {"_default": "人工智能领域，最近动作不少，挑重要的说。"},
 }
 
+FIN_OPENER = {
+    "A股": "回到国内，A股方面，",
+    "港股": "港股这边，",
+    "基金": "基金市场，",
+    "原油": "原油方面，",
+    "外汇": "外汇市场，",
+    "债券": "债券市场，",
+    "_default": "财经方面还有这些消息：",
+}
 
-def speak_stocks():
-    rows = fetch_stocks()
-    if not rows:
-        return "美股行情暂时获取不到，稍后再看。"
-    trend = "集体上涨" if sum(c for _, _, c in rows) >= 0 else "集体下跌"
-    parts = [f"首先关注美股，三大指数{trend}"]
-    for name, price, chg in rows:
+# 条目之间的自然连接词（多变、不重复、不出现"接下来的"）
+ITEM_TRANS = [
+    "另外，", "与此同时，", "值得关注的是，", "视线转到，", "另一边，",
+    "此外，", "紧随其后的消息是，", "同样受到瞩目的还有，", "再把目光投向，",
+    "说来也巧，", "与之呼应的是，", "还有一则，", "不妨也看看，",
+    "接力这条消息，", "同一时间，", "镜头给到，", "顺着这个话题，",
+    "也来关注，", "继续看，", "补充一条，", "同一赛道上，", "另一边传来，",
+]
+
+SUMMARY_LEAD = ["据了解，", "据相关报道，", "消息显示，", "有报道提到，", "资料显示，"]
+
+
+def make_sentence(title, desc, idx):
+    """把一条新闻写成完整、可朗读的句子；标题为主，摘要作补充。"""
+    title = clean_text(title)
+    if not title:
+        return ""
+    if not title[-1] in "。！？!?":
+        title += "。"
+    desc = clean_text(desc)
+    if desc and len(desc) >= 12:
+        overlap = sum(1 for w in desc[:6] if w in title[:10])
+        if overlap < 4:
+            if not desc[-1] in "。！？!?":
+                desc += "。"
+            lead = SUMMARY_LEAD[idx % len(SUMMARY_LEAD)]
+            return f"{title}{lead}{desc}"
+    return title
+
+
+def narrate(items, opener):
+    """把一组新闻串成连贯的一段话。空列表则安静跳过。"""
+    items = [(clean_text(t), clean_text(d)) for t, d in items]
+    items = [(t, d) for t, d in items if t]
+    if not items:
+        return ""
+    parts = [opener]
+    for i, (t, d) in enumerate(items):
+        sent = make_sentence(t, d, i)
+        if not sent:
+            continue
+        if i == 0:
+            parts.append(sent)
+        else:
+            trans = ITEM_TRANS[(i - 1) % len(ITEM_TRANS)]
+            parts.append(trans + sent)
+    return "".join(parts)
+
+
+def narrate_finance(stock_rows, btc, metals):
+    segs = []
+    if stock_rows:
+        up = sum(c for _, _, c in stock_rows)
+        mood = "整体走强" if up > 0 else ("集体承压" if up < 0 else "走势平稳")
+        s = f"先说财经。隔夜美股三大指数{mood}，"
+        for name, price, chg in stock_rows:
+            t = "上涨" if chg >= 0 else "下跌"
+            s += (f"{name}收报{num2cn(round(price))}点，"
+                  f"{t}百分之{num2cn(round(abs(chg), 2))}；")
+        segs.append(s.rstrip("；") + "。")
+    if btc:
+        usd, cny, chg = btc
         t = "上涨" if chg >= 0 else "下跌"
-        parts.append(f"{name}收报{num2cn(price)}点，{t}百分之{num2cn(abs(chg))}")
-    return "，".join(parts) + "。"
+        segs.append(
+            f"加密货币方面，比特币最新报{num2cn(round(usd))}美元，"
+            f"约合人民币{num2cn(round(cny))}元，过去二十四小时"
+            f"{t}百分之{num2cn(round(abs(chg), 2))}。")
+    if metals:
+        base, shuibei, silver = metals
+        segs.append(
+            f"贵金属这边，国内基础金价每克{num2cn(base)}元，"
+            f"水贝足金批发价约每克{num2cn(shuibei)}元，"
+            f"足银每克{num2cn(silver)}元。")
+    if not segs:
+        return ("财经方面，今天几路行情数据暂时没能及时拉取，"
+                "建议您稍后打开行情软件查看。")
+    return "".join(segs)
 
 
-def speak_btc():
-    d = fetch_btc()
-    if not d:
-        return "比特币行情暂时获取不到。"
-    usd, cny, chg = d
-    trend = "上涨" if chg >= 0 else "下跌"
-    return (f"加密货币方面，比特币最新报{num2cn(usd)}美元，"
-            f"折合人民币约{num2cn(cny)}元，过去二十四小时{trend}百分之{num2cn(abs(chg))}。")
-
-
-def speak_metals():
-    m = fetch_metals()
-    if not m:
-        return "贵金属行情暂时获取不到。"
-    gold_sb, silver_sb, base = m
-    return (f"贵金属方面，水贝足金基础价约每克{num2cn(gold_sb)}元，"
-            f"足银约每克{num2cn(silver_sb)}元，国内基础金价每克{num2cn(base)}元。")
-
-
-def speak_news_items(topic, items):
-    if not items:
-        return f"关于{topic}，今天暂未检索到可用消息。"
-    parts = [f"为您播报{topic}方面的消息{count2cn(len(items))}条。"]
-    links = ["首先", "第二条", "第三条", "第四条", "第五条"]
-    for i, (title, desc, src, link) in enumerate(items):
-        body = clean_text(desc if len(desc) >= 10 else title)  # 朗读层再洗一道
-        body = body.rstrip("。！？.!?；;，, ") + "。"
-        kw = links[i] if i < len(links) else f"第{count2cn(i + 1)}条"
-        parts.append(f"{kw}，{body}")
-    return "".join(parts)
-
-
-def speak_weibo(items):
-    if not items:
-        return "今天微博热搜暂未检索到热门话题。"
-    parts = ["为您播报今天微博热搜榜上的热门话题。"]
-    links = ["首先", "此外", "还有", "另外"]
-    for i, (title, desc, src, link) in enumerate(items):
-        body = clean_text(title).rstrip("。！？.!?；;，, ") + "。"
-        kw = links[i] if i < len(links) else "此外"
-        parts.append(f"{kw}，{body}")
-    return "".join(parts)
+def map_topic(t):
+    return {
+        "DOTA2": "DOTA2 电竞 比赛",
+        "单机游戏": "单机游戏 新作 发售",
+        "游戏": "游戏 行业 新作",
+        "国际": "国际 全球 新闻",
+        "AI": "人工智能 AI 大模型 发布",
+    }.get(t, t)
 
 
 def build_briefing(topics):
@@ -333,48 +462,52 @@ def build_briefing(topics):
     today = f"{now.year}年{now.month}月{now.day}日"
     weekday = "星期" + "一二三四五六日"[now.weekday()]
 
-    speech = [f"早上好，今天是{today}，{weekday}。欢迎收听每日新闻播报。"]
+    speech = [(
+        f"早上好，欢迎收听今天的新闻播报。今天是{today}，{weekday}，"
+        f"我们为您梳理了财经、游戏、娱乐、国际、母婴、科技与科学方面"
+        f"值得关注的动态，下面一起听。")]
 
     for cat, keys in CATS:
         matched = [t for t in topics if t in keys]
         if not matched:
             continue
-        speech.append(TRANS[cat])
         if cat == "财经":
-            if "美股" in matched:
-                speech.append(speak_stocks())
-            if "比特币" in matched:
-                speech.append(speak_btc())
-            if "黄金白银" in matched:
-                speech.append(speak_metals())
+            stock_rows = fetch_stocks() if "美股" in matched else []
+            btc = fetch_btc() if "比特币" in matched else None
+            metals = fetch_metals() if "黄金白银" in matched else None
+            speech.append(narrate_finance(stock_rows, btc, metals))
             for t in matched:
                 if t in ("美股", "比特币", "黄金白银"):
                     continue
-                speech.append(speak_news_items(t, fetch_news(t)))
+                speech.append(narrate(fetch_news(t),
+                                      FIN_OPENER.get(t, FIN_OPENER["_default"])))
         elif cat == "娱乐":
-            speech.append(speak_weibo(fetch_weibo_hot()))
+            speech.append(narrate(
+                fetch_weibo_hot(),
+                "娱乐方面，今天微博热搜榜上有几个话题热度很高，我们来聊几个。"))
         elif cat == "母婴":
-            speech.append(speak_news_items("母婴", fetch_mom_tips()))
+            speech.append(narrate(
+                fetch_mom_tips(),
+                "忙碌之中，也给准妈妈们留一段实用提醒："))
         elif cat == "物理":
-            speech.append(speak_news_items(
-                "科学前沿", fetch_news("物理学 科研 突破 研究发现", max_items=1)))
+            speech.append(narrate(
+                fetch_news("物理学 科研 突破 研究发现", max_items=1),
+                "最后，用一则科学前沿的消息收个尾。"))
         else:
             for t in matched:
-                q = t
-                if t == "AI":
-                    q = "人工智能 AI 大模型"
-                elif t == "DOTA2":
-                    q = "DOTA2 电竞"
-                elif t == "单机游戏":
-                    q = "单机游戏 发售"
-                elif t == "国际":
-                    q = "国际 全球 新闻"
-                speech.append(speak_news_items(t, fetch_news(q)))
+                q = map_topic(t)
+                speech.append(narrate(
+                    fetch_news(q),
+                    OPENERS[cat].get(t, OPENERS[cat]["_default"])))
 
-    speech.append("以上就是今天的全部内容。祝您一天顺利，我们明天再见。")
+    speech.append(
+        "以上就是今天的新闻播报。感谢您的收听，祝您一天好心情，"
+        "我们明天同一时间再会。")
     text = "".join(speech)
     return text, text  # 文字版 == 音频版，逐字一致
 
+
+# ---------------- TTS / 配置 / 推送 ----------------
 
 async def tts(text, out_path, voice_key, rate="+0%"):
     import edge_tts
