@@ -26,7 +26,6 @@ jobs:
       - name: 生成简报 + 朗读音频
         env:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-          VOICE: ${{ secrets.VOICE }}
         run: python main.py
 
       - name: 发布音频到 GitHub Pages
