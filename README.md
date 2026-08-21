@@ -1,124 +1,29 @@
-# 每日新闻简报机器人（免费 · 微信推送 · AI 朗读）
+# 每日新闻播报 bot（口播版 · 重制 v6）
 
-每天自动抓你关心的新闻和行情，用 AI 念成一段语音，推送到你**个人微信**。
-**全程免费、不需要服务器、不需要你长期开电脑。**
+每天自动抓取新闻/行情 → 生成「新闻联播式」口播稿 → AI 朗读成 mp3 → 推送到微信。
+全程免费：GitHub Actions 定时 + Edge TTS 朗读 + Server酱推微信。
 
----
+## 部署（一次性）
+1. 新建一个 **Public** 仓库，把这 5 个文件传上去（根目录，不要套文件夹）：
+   `main.py` `config.txt` `requirements.txt` `README.md` `.github/workflows/daily.yml`
+2. 注册 Server酱（https://sct.ftqq.com）拿到 SendKey。
+3. 仓库 **Settings → Secrets and variables → Actions → New repository secret**：
+   Name 填 `SERVERCHAN_KEY`，Value 填你的 SendKey。
+4. 仓库 **Settings → Pages**：Source 选 `Deploy from a branch`，Branch 选 `gh-pages`、目录 `/ (root)`，Save。
+   （`gh-pages` 分支在第一次跑 Actions 后自动出现，没出现就先跑一次再做这步。）
+5. 仓库 **Actions** → 点「每日新闻简报」→ 右上 **Run workflow** 跑一次测试。
 
-## 一、这套东西是怎么跑的（看懂这个就不慌）
+## 每天自动运行
+`daily.yml` 里 `30 23 * * *` = 北京时间每天早上 07:30。不用开电脑。
 
-```
-每天早上 07:30（GitHub 自动运行，你电脑关着也跑）
-  → 抓新闻/行情（美股、比特币、水贝金价银价、微博热搜、国际热点、母婴知识、物理前沿、AI/DOTA2/单机新闻）
-  → 生成简报文字 + 用微软免费语音念成 mp3
-  → 音频传到 GitHub 免费网页空间
-  → Server酱 把消息推到你微信（含简报 + 音频链接）
-你上车 → 点微信里的链接 → 听一路
-```
+## 改你想听的（网页改 config.txt 即可）
+- 增删主题：删/加一行（如 `DOTA2`、`国际`、`母婴知识`）。
+- 换声音：改 `voice=` 那行的代号（文件里有清单）。
+- 调语速：改 `rate=`（如 `rate=-10%` 慢一点）。
 
-所有零件都是免费的：GitHub Actions（定时运行）、Edge TTS（微软免费朗读）、
-Server酱（免费推微信）、GitHub Pages（免费存音频）。
+改完保存（Commit changes），第二天生效；想立刻听就 Actions 跑一次。
 
----
-
-## 二、部署步骤（全程网页操作，不用装软件）
-
-### 第 1 步：注册 GitHub 账号
-1. 打开 https://github.com ，点右上角 **Sign up**（注册）。
-2. 填邮箱 → 设密码 → 取一个用户名 → 验证邮箱。免费，约 5 分钟。
-
-### 第 2 步：新建一个仓库（放这些文件）
-1. 登录后，点页面右上角 **+** → **New repository**。
-2. Repository name 随便起，比如 `news-briefing`（用小写英文/数字）。
-3. 选 **Public**（公开，GitHub Pages 免费需要公开）。
-4. 勾 **Add a README file**（随便，后面会覆盖）。
-5. 点 **Create repository**。
-
-### 第 3 步：把本项目的文件传上去
-最简单的方式——把本项目文件夹里的这几个文件**拖拽上传**到你的仓库：
-- `main.py`
-- `config.txt`
-- `requirements.txt`
-- `.github/workflows/daily.yml`（连同里面的文件夹一起传）
-
-> 在 GitHub 仓库页面点 **Add file → Upload files**，把这几个文件拖进去，
-> 写一句说明（比如“初始化”），点 **Commit changes** 即可。
-
-### 第 4 步：开启 GitHub Pages（用来存音频）
-1. 进仓库 **Settings → Pages**。
-2. Source 选 **Deploy from a branch**，Branch 选 **gh-pages**，目录选 **/ (root)**。
-3. 点 **Save**。第一次运行后会出现这个分支，不用急，跑一次脚本就有了。
-
-### 第 5 步：注册 Server酱（拿到推微信的钥匙）
-1. 打开 https://sct.ftqq.com ，用**微信扫码**登录。
-2. 登录后页面会给你一串 **SendKey**（类似 `SCTxxxxx`）。
-3. 微信里会关注一个“Server酱”服务号，以后消息就推到这里。
-
-### 第 6 步：把钥匙填进仓库（避免泄露）
-1. 进仓库 **Settings → Secrets and variables → Actions → New repository secret**。
-2. Name 填 `SERVERCHAN_KEY`，Value 粘贴第 5 步的 SendKey，点 **Add secret**。
-
-### 第 7 步：开启自动运行 + 测一次
-1. 进仓库 **Actions** 标签，如果提示启用，点 **I understand… enable**。
-2. 点左侧 **每日新闻简报** → 右上 **Run workflow** → 点绿色运行。
-3. 等 1–2 分钟，去微信看有没有收到消息。收到就成功了！
-
-之后每天 07:30 会自动跑，无需任何操作。
-
----
-
-## 三、怎么自定义“想听的内容”
-
-打开仓库里的 **`config.txt`**，像改记事本一样：
-- 不想听某一项，把那一行删掉，或在前面加 `#`。
-- 想加新主题（比如“英超”“基金”），直接加一行关键词即可，
-  新闻类会自动去搜最近两天的相关新闻。
-- 改完点 **Commit changes** 保存，第二天生效。
-
-> 默认已经配好 10 项：AI、DOTA2、单机游戏、微博热搜、X热点、母婴小知识、物理前沿、美股、比特币、黄金白银。
-> 这 10 项分别对应 7 个播报板块，每一项都能单独删行关闭。
-
-### 播报顺序是固定的（不用管 config 里的顺序）
-朗读时按 **财经 → 游戏 → 娱乐 → 国际 → 母婴 → AI → 物理** 的顺序播报：
-- 财经：先美股三大指数（带"集体涨跌"综述）→ 比特币 → 金价银价，再念你加的财经类新闻
-- 游戏：DOTA2、单机游戏…
-- 娱乐：微博热搜榜热门话题（国内娱乐圈八卦）
-- 国际：国际热点消息（X/推特无免费接口，用 Reddit 国际要闻热榜代替）
-- 母婴：孕期小知识（内置知识库，每天轮换一条）
-- AI：AI 相关新闻
-- 物理：物理学前沿消息（Phys.org 科普源）
-- 每类之间有过渡语衔接（"接下来我们把目光转向游戏圈"），稿子模仿新闻联播口播，念的是**新闻摘要**而不是标题，数字用中文播音腔（如"五万二千七百五十九点二一"）。
-
----
-
-## 四、怎么换声音 / 调语速（一行搞定，不用动代码）
-
-打开仓库里的 **`config.txt`**，找到最下面的两行：
-
-```
-voice=yunxi        ← 改这个英文名换声音
-rate=+0%           ← 嫌快改 -10%，嫌慢改 +15%
-```
-
-- **换声音**：把 `voice=` 后面的词换成下面任意一个（中文名只是提示）：
-  - 男声：`yunxi`（温和）、`yunyang`（新闻播报）、`yunjian`（浑厚）、`yunfeng`（成熟）、`yunhao`（沉稳）
-  - 女声：`xiaoxiao`（甜美）、`xiaoyi`（活泼）、`xiaochen`（干练）、`xiaohan`（温婉）、`xiaorui`（知性）、`xiaoyou`（温柔）
-- **调语速**：`rate=-10%` 慢一点，`rate=+15%` 快一点，恢复默认写 `+0%`。
-- 改完点 **Commit changes** 保存，**第二天自动生效**。想立刻试效果，去 Actions 手动点一次 Run workflow 即可。
-
----
-
-## 五、常见问题
-
-- **微信收不到？** 检查 Server酱 SendKey 是否填对；去 sct.ftqq.com 看“发送记录”有没有报错。
-- **音频点不开？** 确认第 4 步 Pages 已开启，且至少成功跑过一次（生成了 gh-pages 分支）。
-- **某天新闻是空的？** 公开源偶尔抽风，脚本会自动跳过该项，不影响其他内容；第二天再试。
-- **想换朗读声音 / 语速？** 改 `config.txt` 最下面的 `voice=` / `rate=` 一行即可（详见上一节）。
-- **想改推送时间？** 改 `daily.yml` 里的 `cron`，示例 `30 23 * * *` = 北京 07:30；
-  公式：北京时间 = UTC 时间 + 8 小时。
-
----
-
-## 六、成本
-
-**0 元。** 没有任何付费环节。GitHub / Server酱 / 微软 TTS / Pages 均有免费额度，日用远用不完。
+## 关键设计
+- 新闻全部来自 Google News 中文 RSS，天然无 HTML、无英文标题。
+- 朗读前经多道清洗，绝不会念出 `a href=`、`<font>`、网址、广告词。
+- 文字版与音频版用同一份数据，逐字一致。
