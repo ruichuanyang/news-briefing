@@ -38,6 +38,8 @@ def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
         # 强制模型进行当日联网检索；这里是 AI 自主选择查询、读取与交叉验证来源。
         kwargs["extra_body"] = {
             "enable_search": True,
+            # DashScope does not support non-streaming web search in thinking mode.
+            "enable_thinking": False,
             "search_options": {"forced_search": True, "search_strategy": "agent", "enable_source": True},
         }
     result = client.chat.completions.create(
