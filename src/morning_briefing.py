@@ -26,7 +26,9 @@ def require(name: str) -> str:
 
 def chat_client() -> OpenAI:
     # 北京地域的兼容接口。工作空间专属地址可通过 secret 覆盖，须以 /v1 结尾。
-    base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    # GitHub Actions exposes an unset optional Secret as an empty string.
+    # Treat that exactly like an absent variable so the documented default works.
+    base_url = os.getenv("DASHSCOPE_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
     return OpenAI(api_key=require("DASHSCOPE_API_KEY"), base_url=base_url)
 
 
@@ -98,7 +100,7 @@ def find_audio_url(value, key_hint=""):
 
 def synthesize(text: str) -> str:
     key = require("DASHSCOPE_API_KEY")
-    voice = os.getenv("DASHSCOPE_TTS_VOICE", "longanyang")
+    voice = os.getenv("DASHSCOPE_TTS_VOICE") or "longanyang"
     endpoint = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
     response = requests.post(
         endpoint,
