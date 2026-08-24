@@ -107,41 +107,56 @@ def find_audio_url(value, key_hint=""):
 
 
 def synthesize(text: str) -> str:
+    """用百炼北京地域 CosyVoice v3 合成语音，返回可播放的临时音频 URL（24h 有效）。
+
+    官方说明：CosyVoice 非实时语音合成仅在北京地域可用，且必须使用业务空间专属
+    Endpoint；voice/format/sample_rate 放在 input 中；非流式响应直接包含音频 URL，
+    无需 X-DashScope-Async 轮询。
+    """
     key = require("DASHSCOPE_API_KEY")
-    voice = os.getenv("DASHSCOPE_TTS_VOICE") or "longanyang"
     workspace_id = os.getenv("DASHSCOPE_WORKSPACE_ID", "").strip()
     if not workspace_id:
-        raise RuntimeError("缺少 DASHSCOPE_WORKSPACE_ID：CosyVoice 语音合成需要百炼业务空间 ID")
+        raise RuntimeError("缺少 DASHSCOPE_WORKSPACE_ID：CosyVoice 语音合成需要百炼北京地域业务空间 ID")
+    voice = os.getenv("DASHSCOPE_TTS_VOICE") or "longanyang"
     api_root = f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1"
     endpoint = f"{api_root}/services/audio/tts/SpeechSynthesizer"
-    response = requests.post(
-        endpoint,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-DashScope-Async": "enable"},
-        json={"model": "cosyvoice-v3-flash", "input": {"text": text}, "parameters": {"voice": voice, "format": "mp3", "sample_rate": 24000}},
-        timeout=45,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    task_id = payload.get("output", {}).get("task_id")
-    if not task_id:
-        audio = find_audio_url(payload)
-        if audio:
-            return audio
-        raise RuntimeError(f"语音任务未返回 task_id：{payload}")
-    for _ in range(60):
-        task = requests.get(f"{api_root}/tasks/{task_id}", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-        task.raise_for_status()
-        payload = task.json()
-        status = payload.get("output", {}).get("task_status")
-        if status == "SUCCEEDED":
-            audio = find_audio_url(payload)
-            if audio:
-                return audio
-            raise RuntimeError(f"语音任务成功但未找到音频URL：{payload}")
-        if status in {"FAILED", "CANCELED"}:
-            raise RuntimeError(f"语音合成失败：{payload}")
-        time.sleep(2)
-    raise RuntimeError("语音合成超时")
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    payload = {
+        "model": "cosyvoice-v3-flash",
+        "input": {"text": text, "voice": voice, "format": "mp3", "sample_rate": 24000},
+    }
+    try:
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=90)
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = ""
+        try:
+            detail = response.text
+        except Exception:
+            pass
+        raise RuntimeError(f"语音合成请求失败（HTTP {response.status_code}）：{detail[:1500]}") from exc
+    data = response.json()
+    audio = find_audio_url(data)
+    if audio:
+        return audio
+    # 兼容个别返回 task_id 的异步形态：轮询任务状态取 URL。
+    task_id = (data.get("output") or {}).get("task_id") or data.get("task_id")
+    if task_id:
+        for _ in range(60):
+            time.sleep(2)
+            task = requests.get(f"{api_root}/tasks/{task_id}", headers=headers, timeout=30)
+            task.raise_for_status()
+            tp = task.json()
+            status = (tp.get("output") or {}).get("task_status")
+            if status == "SUCCEEDED":
+                audio = find_audio_url(tp)
+                if audio:
+                    return audio
+                raise RuntimeError(f"语音任务成功但未找到音频URL：{tp}")
+            if status in {"FAILED", "CANCELED"}:
+                raise RuntimeError(f"语音合成任务失败：{tp}")
+        raise RuntimeError("语音合成轮询超时")
+    raise RuntimeError(f"语音合成响应中未找到音频URL：{data}")
 
 
 def spoken_version(script: str) -> str:
