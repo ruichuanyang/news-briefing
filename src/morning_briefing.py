@@ -284,7 +284,8 @@ def publish_to_ghpages(date: str, mp3_bytes: bytes, html: str) -> str:
         if sha:
             body["sha"] = sha
         _gh_api("PUT", f"contents/{path}", body)
-    return f"https://cdn.jsdelivr.net/gh/{REPO}@gh-pages/audio/{date}.html"
+    owner, _, name = REPO.partition("/")
+    return f"https://{owner}.github.io/{name}/audio/{date}.html"
 
 
 def prune_old_audio(date: str, keep_days: int = 14) -> None:
