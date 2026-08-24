@@ -126,7 +126,9 @@ def synthesize(text: str) -> str:
         "input": {"text": text, "voice": voice, "format": "mp3", "sample_rate": 24000},
     }
     try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=90)
+        # CosyVoice 非流式合成耗时随字数近似线性增长：600 字约 72 秒，
+        # 1300 字晨报约需 2~2.5 分钟，故读取超时放宽到 420 秒。
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=420)
         response.raise_for_status()
     except requests.HTTPError as exc:
         detail = ""
@@ -136,7 +138,7 @@ def synthesize(text: str) -> str:
             pass
         raise RuntimeError(f"语音合成请求失败（HTTP {response.status_code}）：{detail[:1500]}") from exc
     data = response.json()
-    audio = find_audio_url(data)
+    audio = (data.get("output") or {}).get("audio", {}).get("url") or find_audio_url(data)
     if audio:
         return audio
     # 兼容个别返回 task_id 的异步形态：轮询任务状态取 URL。
