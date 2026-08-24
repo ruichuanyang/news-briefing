@@ -114,6 +114,8 @@ def clean_for_tts(text):
     text = re.sub(r"[《》「」『』“”‘’]", "", text)
     # 间隔号 · 去掉；破折号/连接号 — – 去掉；省略号 … 去掉
     text = text.replace("·", "").replace("—", "").replace("–", "").replace("…", "")
+    # 下划线、星号、井号 → 去掉（Edge TTS 会念出来）
+    text = re.sub(r"[_*#]+", "", text)
     # 中文顿号、逗号、句号、问号、感叹号、冒号、分号 都是合法断句标点，Edge TTS 不读，保留
     # 英文标点转中文或去掉（避免读成 "comma"）
     text = text.replace(",", "，").replace(";", "；").replace(":", "：")
@@ -135,6 +137,28 @@ SOURCE_FRAGS = [
     "凤凰网", "凤凰资讯", "东方网", "红星新闻", "封面新闻", "极目新闻",
     "上游新闻", "九派新闻", "潇湘晨报", "扬子晚报", "钱江晚报", "澎湃讯",
 ]
+
+# 中文内容检测：标题里至少要有一定比例的中文字符，否则视为英文脏数据丢弃
+_CN_CHAR_RE = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
+
+
+def has_chinese(text, min_ratio=0.3):
+    """判断文本是否包含足够多的中文内容。min_ratio=中文字符占总字符的最低比例。"""
+    if not text:
+        return False
+    cn = len(_CN_CHAR_RE.findall(text))
+    total = len(text.replace(" ", ""))
+    if total == 0:
+        return False
+    return (cn / total) >= min_ratio
+
+
+# 广告/垃圾关键词（更严格，用于候选过滤）
+SPAM_RE = re.compile(
+    r"(?i)(亚博|博彩|彩票|赌博|开户|注册送|充值返|客服|加微信|"
+    r"扫码领|限时优惠|点击领取|免费领取|代理|招商|加盟|"
+    r"欢迎你|真没有|网游命|黄宫官网)", re.I
+)
 
 
 def strip_source(title, src):
@@ -291,7 +315,7 @@ def fetch_metals():
 
 
 def _google_news(q, max_items=6):
-    """Google News 中文 RSS；标题剥来源。返回 [(title, desc), ...]。"""
+    """Google News 中文 RSS；标题剥来源、过滤英文/广告。返回 [(title, desc), ...]。"""
     try:
         url = (f"https://news.google.com/rss/search?q={quote(q)}"
                f"&hl=zh-CN&gl=CN&ceid=CN:zh-Hans")
@@ -304,7 +328,9 @@ def _google_news(q, max_items=6):
             raw_src = it.findtext("source", "")
             title = strip_source(clean_text(raw_title), clean_text(raw_src))
             desc = clean_text(raw_desc)
-            if not title or CLICKBAIT.search(title):
+            if not title or CLICKBAIT.search(title) or SPAM_RE.search(title):
+                continue
+            if not has_chinese(title):       # ← 过滤掉非中文标题
                 continue
             out.append((title, desc))
             if len(out) >= max_items:
@@ -323,7 +349,7 @@ def fetch_news(q, max_items=6):
 def fetch_dota2_news(max_items=8):
     """DOTA2 专项源：优先 Liquipedia 近 48 小时变动页（赛事/战队权威），
     不足或失败时补 Google News『DOTA2 比赛 夺冠 战队 TI』。
-    返回 [(title, desc), ...]，标题已清洗去来源。"""
+    返回 [(title, desc), ...]，标题已清洗去来源、过滤纯英文/广告。"""
     out = []
     try:
         # Liquipedia 的「近期变动」页面，含战队、赛事、选手动态
@@ -335,12 +361,14 @@ def fetch_dota2_news(max_items=8):
             t = clean_text(t)
             if not t or t.lower().startswith("mediawiki") or "recent changes" in t.lower():
                 continue
-            if CLICKBAIT.search(t):
+            if CLICKBAIT.search(t) or SPAM_RE.search(t):
+                continue
+            if not has_chinese(t):       # ← 丢掉纯英文标题（Liquipedia 主要输出英文）
                 continue
             out.append((t, ""))
             if len(out) >= max_items:
                 break
-        print(f"[dota2] Liquipedia 抓到 {len(out)} 条")
+        print(f"[dota2] Liquipedia 抓到 {len(out)} 条（已过滤英文/广告）")
     except Exception as e:
         print(f"[dota2] Liquipedia 失败: {e}")
 
@@ -390,7 +418,9 @@ def fetch_weibo_hot(max_items=5):
 
     out, seen = [], set()
     for t in candidates:
-        if not t or CLICKBAIT.search(t) or t in seen:
+        if not t or CLICKBAIT.search(t) or SPAM_RE.search(t) or t in seen:
+            continue
+        if not has_chinese(t):
             continue
         seen.add(t)
         out.append((t, ""))
@@ -423,6 +453,13 @@ def fetch_mom_tips():
 
 # ---------------- LLM 润色层（v8 新增）----------------
 
+# GitHub Models 免费推理端点（Azure 托管版，更稳定）
+LLM_ENDPOINTS = [
+    "https://models.inference.ai.azure.com",   # 主力端点（Azure 托管）
+    "https://models.github.ai/inference",       # 备选端点
+]
+
+
 def call_llm(messages, model, timeout=40):
     """调用 GitHub Models 免费推理接口（OpenAI 兼容）。
 
@@ -434,18 +471,25 @@ def call_llm(messages, model, timeout=40):
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         raise RuntimeError("无 GITHUB_TOKEN，跳过 LLM 润色")
-    client = openai.OpenAI(
-        api_key=token,
-        base_url="https://models.github.ai/inference",
-    )
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=0.4,
-        max_tokens=900,
-        timeout=timeout,
-    )
-    return resp.choices[0].message.content.strip()
+    last_err = None
+    for endpoint in LLM_ENDPOINTS:
+        try:
+            client = openai.OpenAI(api_key=token, base_url=endpoint)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.4,
+                max_tokens=900,
+                timeout=timeout,
+            )
+            text = resp.choices[0].message.content.strip()
+            print(f"[llm] 调用成功 endpoint={endpoint} model={model} len={len(text)}")
+            return text
+        except Exception as e:
+            last_err = e
+            print(f"[llm] endpoint={endpoint} 失败: {e}")
+            continue
+    raise RuntimeError(f"所有 LLM 端点均失败: {last_err}")
 
 
 SYS_PROMPT = (
@@ -545,9 +589,12 @@ def make_sentence(title, desc, idx):
 
 
 def narrate(items, opener):
-    """把一组新闻串成连贯的一段话。空列表则安静跳过。"""
+    """把一组新闻串成连贯的一段话。空列表则安静跳过。
+    规则引擎兜底时也会做质量过滤（去广告/纯英文/太短）。"""
     items = [(clean_text(t), clean_text(d)) for t, d in items]
-    items = [(t, d) for t, d in items if t]
+    # 质量过滤：去广告、去纯英文、去太短
+    items = [(t, d) for t, d in items
+             if t and not SPAM_RE.search(t) and has_chinese(t) and len(t) >= 5]
     if not items:
         return ""
     parts = [opener]
