@@ -21,6 +21,7 @@
 | Secret | 内容 |
 | --- | --- |
 | `DASHSCOPE_API_KEY` | 百炼北京地域 API Key |
+| `DASHSCOPE_WORKSPACE_ID` | 百炼北京地域的业务空间 ID；CosyVoice 语音合成必填。 |
 | `SERVERCHAN_SENDKEY` | 你的方糖 Turbo SendKey |
 | `DASHSCOPE_BASE_URL` | 可选；默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`。若控制台给出工作空间专属 OpenAI 兼容地址，填该地址（以 `/v1` 结尾）。 |
 | `DASHSCOPE_TTS_VOICE` | 可选；默认 `longanyang`。建议先在百炼声音设计中创建一次“沉稳、清晰、普通话标准的新闻播音男声”，把返回的 voice_id 填入这里。CosyVoice 创建音色免费。 |

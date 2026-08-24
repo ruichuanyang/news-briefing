@@ -109,7 +109,11 @@ def find_audio_url(value, key_hint=""):
 def synthesize(text: str) -> str:
     key = require("DASHSCOPE_API_KEY")
     voice = os.getenv("DASHSCOPE_TTS_VOICE") or "longanyang"
-    endpoint = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+    workspace_id = os.getenv("DASHSCOPE_WORKSPACE_ID", "").strip()
+    if not workspace_id:
+        raise RuntimeError("缺少 DASHSCOPE_WORKSPACE_ID：CosyVoice 语音合成需要百炼业务空间 ID")
+    api_root = f"https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1"
+    endpoint = f"{api_root}/services/audio/tts/SpeechSynthesizer"
     response = requests.post(
         endpoint,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-DashScope-Async": "enable"},
@@ -125,7 +129,7 @@ def synthesize(text: str) -> str:
             return audio
         raise RuntimeError(f"语音任务未返回 task_id：{payload}")
     for _ in range(60):
-        task = requests.get(f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+        task = requests.get(f"{api_root}/tasks/{task_id}", headers={"Authorization": f"Bearer {key}"}, timeout=30)
         task.raise_for_status()
         payload = task.json()
         status = payload.get("output", {}).get("task_status")
