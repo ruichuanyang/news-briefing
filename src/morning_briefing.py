@@ -78,6 +78,19 @@ def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
     return content.strip()
 
 
+def _parse_date(value: str):
+    """把 '2026-08-24' / '2026/08/24' 解析为 datetime；失败返回 None。"""
+    if not value:
+        return None
+    m = re.match(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", str(value))
+    if not m:
+        return None
+    try:
+        return datetime(int(m[1]), int(m[2]), int(m[3]))
+    except ValueError:
+        return None
+
+
 def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> list[dict]:
     """智谱独立 Web Search API：直接返回结构化搜索结果，不经过 LLM 生成。
 
@@ -122,6 +135,14 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
                     "content": content[:400],
                 })
             if results:
+                # 时效窗口：只保留 14 天内的结果，防止搜索引擎把旧文/过期价格当新内容返回
+                cutoff = (now.date() - timedelta(days=14)) if now else None
+                if cutoff:
+                    results = [
+                        r for r in results
+                        if (d := _parse_date(r["date"])) is None or d.date() >= cutoff
+                    ]
+                # 过滤后为空说明只有旧闻，直接视为无可靠更新（重试也不会变新）
                 return results
             last_err = "empty result"
             time.sleep(2 * (attempt + 1))
