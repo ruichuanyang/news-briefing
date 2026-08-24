@@ -14,11 +14,19 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import asyncio
+import edge_tts
+import io
 import requests
 from openai import OpenAI
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "topics.json"
+
+# 由 main() 在读取 topics.json 后写入，ask_model/synthesize 据此选择提供方。
+LLM_PROVIDER = "zhipu"          # zhipu | qwen
+LLM_MODEL = "glm-4-flash"       # 智谱 GLM-4-Flash 永久免费
+TTS_CFG: dict = {"provider": "edge", "voice": "zh-CN-XiaoxiaoNeural"}
 
 
 def require(name: str) -> str:
@@ -29,24 +37,30 @@ def require(name: str) -> str:
 
 
 def chat_client() -> OpenAI:
-    # 北京地域的兼容接口。工作空间专属地址可通过 secret 覆盖，须以 /v1 结尾。
-    # GitHub Actions exposes an unset optional Secret as an empty string.
-    # Treat that exactly like an absent variable so the documented default works.
-    base_url = os.getenv("DASHSCOPE_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    return OpenAI(api_key=require("DASHSCOPE_API_KEY"), base_url=base_url)
+    if LLM_PROVIDER == "qwen":
+        # 阿里百炼兼容接口（旧方案，保留作回退）。
+        base_url = os.getenv("DASHSCOPE_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        return OpenAI(api_key=require("DASHSCOPE_API_KEY"), base_url=base_url)
+    # 默认智谱 GLM：OpenAI 兼容、永久免费、内置联网搜索、国内可达。
+    base_url = os.getenv("ZHIPU_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4"
+    return OpenAI(api_key=require("ZHIPU_API_KEY"), base_url=base_url)
 
 
 def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
     kwargs = {}
     if web:
-        # 百炼要求思考模式下的联网搜索使用流式响应；逐块取回最终正文。
-        kwargs["extra_body"] = {
-            "enable_search": True,
-            "search_options": {"forced_search": True, "search_strategy": "agent", "enable_source": True},
-        }
+        if LLM_PROVIDER == "qwen":
+            # 百炼要求思考模式下的联网搜索使用流式响应；逐块取回最终正文。
+            kwargs["extra_body"] = {
+                "enable_search": True,
+                "search_options": {"forced_search": True, "search_strategy": "agent", "enable_source": True},
+            }
+        else:
+            # 智谱内置联网搜索工具：自动检索并返回来源（标题/URL/摘要）。
+            kwargs["tools"] = [{"type": "web_search", "web_search": {"enable": True, "search_result": True}}]
         kwargs["stream"] = True
     result = client.chat.completions.create(
-        model=os.getenv("DASHSCOPE_MODEL", "qwen3.6-flash"),
+        model=LLM_MODEL,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0.25 if web else 0.65,
         **kwargs,
@@ -110,13 +124,21 @@ def find_audio_url(value, key_hint=""):
     return None
 
 
-def synthesize(text: str) -> str:
-    """用百炼北京地域 CosyVoice v3 合成语音，返回可播放的临时音频 URL（24h 有效）。
+def synthesize(text: str) -> bytes:
+    """合成语音，返回 MP3 字节（供后续托管到播放页）。
 
-    官方说明：CosyVoice 非实时语音合成仅在北京地域可用，且必须使用业务空间专属
-    Endpoint；voice/format/sample_rate 放在 input 中；非流式响应直接包含音频 URL，
-    无需 X-DashScope-Async 轮询。
+    提供方由 TTS_CFG['provider'] 决定：
+      - 'edge'（默认）：微软 Edge TTS，完全免费、无需密钥；
+      - 'cosyvoice'：阿里百炼 CosyVoice v3（旧方案，保留作回退）。
     """
+    provider = (TTS_CFG or {}).get("provider", "edge")
+    if provider == "cosyvoice":
+        return _synthesize_cosyvoice(text)
+    return _synthesize_edge(text, (TTS_CFG or {}).get("voice") or "zh-CN-XiaoxiaoNeural")
+
+
+def _synthesize_cosyvoice(text: str) -> bytes:
+    """阿里百炼 CosyVoice v3（北京地域业务空间专属 Endpoint），返回音频字节。"""
     key = require("DASHSCOPE_API_KEY")
     workspace_id = os.getenv("DASHSCOPE_WORKSPACE_ID", "").strip()
     if not workspace_id:
@@ -130,8 +152,6 @@ def synthesize(text: str) -> str:
         "input": {"text": text, "voice": voice, "format": "mp3", "sample_rate": 24000},
     }
     try:
-        # CosyVoice 非流式合成耗时随字数近似线性增长：600 字约 72 秒，
-        # 1300 字晨报约需 2~2.5 分钟，故读取超时放宽到 420 秒。
         response = requests.post(endpoint, headers=headers, json=payload, timeout=420)
         response.raise_for_status()
     except requests.HTTPError as exc:
@@ -144,8 +164,7 @@ def synthesize(text: str) -> str:
     data = response.json()
     audio = (data.get("output") or {}).get("audio", {}).get("url") or find_audio_url(data)
     if audio:
-        return audio
-    # 兼容个别返回 task_id 的异步形态：轮询任务状态取 URL。
+        return download_audio(audio)
     task_id = (data.get("output") or {}).get("task_id") or data.get("task_id")
     if task_id:
         for _ in range(60):
@@ -157,12 +176,24 @@ def synthesize(text: str) -> str:
             if status == "SUCCEEDED":
                 audio = find_audio_url(tp)
                 if audio:
-                    return audio
+                    return download_audio(audio)
                 raise RuntimeError(f"语音任务成功但未找到音频URL：{tp}")
             if status in {"FAILED", "CANCELED"}:
                 raise RuntimeError(f"语音合成任务失败：{tp}")
         raise RuntimeError("语音合成轮询超时")
     raise RuntimeError(f"语音合成响应中未找到音频URL：{data}")
+
+
+def _synthesize_edge(text: str, voice: str) -> bytes:
+    """微软 Edge TTS：免费、无需密钥。流式累积音频字节后返回。"""
+    async def _run() -> bytes:
+        buf = bytearray()
+        communicate = edge_tts.Communicate(text, voice)
+        async for kind, data in communicate.stream():
+            if kind == "audio":
+                buf.extend(data)
+        return bytes(buf)
+    return asyncio.run(_run())
 
 
 def spoken_version(script: str) -> str:
@@ -259,7 +290,7 @@ def _gh_api(method: str, path: str, body: dict | None = None) -> dict:
 
 
 def publish_to_ghpages(date: str, mp3_bytes: bytes, html: str) -> str:
-    """把 MP3 与播放页发布到 gh-pages 分支，返回 jsDelivr 播放页 URL（https，国内可达）。"""
+    """把 MP3 与播放页发布到 gh-pages 分支，返回 GitHub Pages 播放页 URL（https，微信内可正常打开）。"""
     token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
     if not token:
         raise RuntimeError("缺少 GH_TOKEN，无法发布播放页")
@@ -309,28 +340,34 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="只生成文字，不合成或推送")
     args = parser.parse_args()
     config = json.loads(CONFIG.read_text(encoding="utf-8"))
+    # 读取提供方配置，写入模块级全局，供 chat_client/ask_model/synthesize 使用。
+    llm_cfg = config.get("llm") or {}
+    tts_cfg = config.get("tts") or {}
+    globals()["LLM_PROVIDER"] = llm_cfg.get("provider", "zhipu")
+    globals()["LLM_MODEL"] = llm_cfg.get("model") or ("glm-4-flash" if LLM_PROVIDER == "zhipu" else "qwen3.6-flash")
+    globals()["TTS_CFG"] = tts_cfg or {"provider": "edge", "voice": "zh-CN-XiaoxiaoNeural"}
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
     client = chat_client()
     research = collect_research(client, config["topics"], now)
     script = write_script(client, research, int(config.get("target_chars", 1300)), now)
-    result = {"generated_at": now.isoformat(), "research": research, "script": script}
+    title = f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}"
+    result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider")}
     if not args.dry_run:
-        audio_url = synthesize(spoken_version(script))
-        result["audio_url"] = audio_url
-        player_url = None
+        audio_bytes = synthesize(spoken_version(script))
         date = now.strftime("%Y%m%d")
+        mp3_url = f"https://cdn.jsdelivr.net/gh/{REPO}@gh-pages/audio/{date}.mp3"
+        player_url = None
         try:
-            mp3_bytes = download_audio(audio_url)
-            mp3_url = f"https://cdn.jsdelivr.net/gh/{REPO}@gh-pages/audio/{date}.mp3"
-            html = build_player_html(date, f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", mp3_url, script)
-            player_url = publish_to_ghpages(date, mp3_bytes, html)
+            html = build_player_html(date, title, mp3_url, script)
+            player_url = publish_to_ghpages(date, audio_bytes, html)
             result["player_url"] = player_url
             result["mp3_url"] = mp3_url
             prune_old_audio(date)
             print(f"播放页已发布：{player_url}")
         except Exception as exc:
-            print(f"发布播放页失败，回退到原始音频链接：{exc}", file=sys.stderr)
-        push(f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", script, audio_url, player_url)
+            print(f"发布播放页失败，回退到音频直链：{exc}", file=sys.stderr)
+        result["audio_url"] = mp3_url
+        push(title, script, mp3_url, player_url)
     (ROOT / "run-output.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print("完成" if not args.dry_run else "文字稿生成完成（dry-run）")
 
