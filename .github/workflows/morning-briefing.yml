@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   send:
@@ -27,6 +27,7 @@ jobs:
           DASHSCOPE_WORKSPACE_ID: ${{ secrets.DASHSCOPE_WORKSPACE_ID }}
           DASHSCOPE_TTS_VOICE: ${{ secrets.DASHSCOPE_TTS_VOICE }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python src/morning_briefing.py
       - name: 保存本次生成记录（仅 Actions 保留）
         if: always()
