@@ -175,6 +175,45 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
     return "\n\n".join(memo)
 
 
+def extract_sources(research: str) -> list[tuple[str, str]]:
+    """从研究备忘中提取真实 URL，返回 [(域名, url)]，按出现顺序去重。"""
+    urls: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for line in research.splitlines():
+        if "｜" not in line or "http" not in line:
+            continue
+        link = line.split("｜")[-1].strip()
+        if not link.startswith("http"):
+            continue
+        key = link.split("?")[0][:100]
+        if key in seen:
+            continue
+        seen.add(key)
+        domain = re.sub(r"^https?://(?:www\.)?", "", link).split("/")[0]
+        urls.append((domain or "来源", link))
+    return urls
+
+
+def postprocess_script(script: str, research: str) -> str:
+    """兜底约束（GLM-4-Flash 指令遵循有限）：
+
+    1. 剥离 ```markdown / ``` 代码围栏；
+    2. 文末“资料来源”小节只保留研究备忘中真实出现的 URL，绝不保留模型编造的域名。
+    """
+    script = script.strip()
+    script = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", script)
+    script = re.sub(r"\s*```\s*$", "", script)
+    # 截掉模型自带的资料来源部分
+    head = re.split(r"(?:^|\n)#+\s*资料来源", script, maxsplit=1)[0].rstrip()
+    sources = extract_sources(research)
+    if not sources:
+        return head
+    lines = ["\n\n### 资料来源\n"]
+    for domain, url in sources:
+        lines.append(f"- {domain}: {url}")
+    return head + "\n".join(lines)
+
+
 def write_script(client: OpenAI, research: str, target_chars: int, now: datetime) -> str:
     return ask_model(
         client,
@@ -193,7 +232,7 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "其中黄金白银必须单独成段，写明品种、价格、单位、日期与来源（以深圳水贝行情优先）；"
         "美股必须报出主要指数点位或涨跌幅数字。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
         "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
-        "4. 文末附'资料来源'小节，每条只列来源名和备忘中的真实URL，供读者核验。\n"
+        "4. 不要写'资料来源'小节，来源链接会由系统自动附加到文末。\n"
         "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research,
         web=False,
     )
@@ -444,7 +483,7 @@ def main() -> None:
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
     client = chat_client()
     research = collect_research(client, config["topics"], now)
-    script = write_script(client, research, int(config.get("target_chars", 1300)), now)
+    script = postprocess_script(write_script(client, research, int(config.get("target_chars", 1300)), now), research)
     title = f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}"
     result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider")}
     if not args.dry_run:
