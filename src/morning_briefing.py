@@ -35,20 +35,26 @@ def chat_client() -> OpenAI:
 def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
     kwargs = {}
     if web:
-        # 强制模型进行当日联网检索；这里是 AI 自主选择查询、读取与交叉验证来源。
+        # 百炼要求思考模式下的联网搜索使用流式响应；逐块取回最终正文。
         kwargs["extra_body"] = {
             "enable_search": True,
-            # DashScope does not support non-streaming web search in thinking mode.
-            "enable_thinking": False,
             "search_options": {"forced_search": True, "search_strategy": "agent", "enable_source": True},
         }
+        kwargs["stream"] = True
     result = client.chat.completions.create(
         model=os.getenv("DASHSCOPE_MODEL", "qwen3.6-flash"),
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0.25 if web else 0.65,
         **kwargs,
     )
-    content = result.choices[0].message.content
+    if web:
+        content = "".join(
+            chunk.choices[0].delta.content or ""
+            for chunk in result
+            if chunk.choices and chunk.choices[0].delta.content
+        )
+    else:
+        content = result.choices[0].message.content
     if not content:
         raise RuntimeError("模型没有返回内容")
     return content.strip()
