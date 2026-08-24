@@ -1,0 +1,37 @@
+name: 每日 AI 晨报
+
+on:
+  schedule:
+    # 23:00 UTC = 北京时间次日 07:00，给检索、写稿和语音合成留出 1 小时。
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 生成并推送晨报
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
+          DASHSCOPE_TTS_VOICE: ${{ secrets.DASHSCOPE_TTS_VOICE }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: python src/morning_briefing.py
+      - name: 保存本次生成记录（仅 Actions 保留）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: morning-briefing-${{ github.run_id }}
+          path: run-output.json
+          if-no-files-found: ignore
+          retention-days: 7

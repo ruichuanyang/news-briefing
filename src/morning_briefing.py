@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""AI-first daily news briefing: search -> verify/select -> write -> TTS -> ServerChan."""
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import requests
+from openai import OpenAI
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = ROOT / "config" / "topics.json"
+
+
+def require(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"缺少环境变量 {name}")
+    return value
+
+
+def chat_client() -> OpenAI:
+    # 北京地域的兼容接口。工作空间专属地址可通过 secret 覆盖，须以 /v1 结尾。
+    base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    return OpenAI(api_key=require("DASHSCOPE_API_KEY"), base_url=base_url)
+
+
+def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
+    kwargs = {}
+    if web:
+        # 强制模型进行当日联网检索；这里是 AI 自主选择查询、读取与交叉验证来源。
+        kwargs["extra_body"] = {
+            "enable_search": True,
+            "search_options": {"forced_search": True, "search_strategy": "agent", "enable_source": True},
+        }
+    result = client.chat.completions.create(
+        model=os.getenv("DASHSCOPE_MODEL", "qwen3.6-flash"),
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.25 if web else 0.65,
+        **kwargs,
+    )
+    content = result.choices[0].message.content
+    if not content:
+        raise RuntimeError("模型没有返回内容")
+    return content.strip()
+
+
+def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
+    topic_text = "\n".join(f"- {x['name']}：{x['instructions']}" for x in topics)
+    return ask_model(
+        client,
+        "你是一名严谨的中文新闻研究编辑。你必须主动联网搜索，不能以记忆或想象填补事实。"
+        "先检索当日及过去36小时的信息，优先官方、原始论文、交易所、公司公告和主流媒体。"
+        "交叉核查日期、数字、名称。无法证实、来源不明、八卦传言一律舍弃。",
+        f"现在是 {now:%Y-%m-%d %H:%M}（{now.tzname()}）。为以下栏目做研究备忘：\n{topic_text}\n\n"
+        "每个栏目最多保留2条最有价值的事实。每条写成：标题｜发生/发布的准确时间｜2-3句事实｜来源名称与URL。"
+        "没有可靠新内容就明确写‘今日无可靠更新’，绝不凑数。价格必须说明品种、币种、时间和数据源。",
+        web=True,
+    )
+
+
+def write_script(client: OpenAI, research: str, target_chars: int, now: datetime) -> str:
+    return ask_model(
+        client,
+        "你是中文广播新闻节目的资深主编。把研究备忘写成一篇自然、克制、适合早晨收听的完整口播稿。"
+        "事实只可来自备忘；不确定就不说。绝不编造标题、来源、数字或因果。",
+        f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
+        "正常语速约6分钟，绝不超过10分钟。\n\n"
+        "写作要求：\n1. 用一个简洁开场串起全篇，再按‘市场与科技—Dota2—文娱—深圳与科学’自然过渡，"
+        "信息少的栏目可合并，不要逐栏报菜单。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
+        "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
+        "4. 文末附‘资料来源’小节，每条只列来源名和URL，供读者核验。\n"
+        "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research,
+        web=False,
+    )
+
+
+def find_audio_url(value, key_hint=""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            hit = find_audio_url(item, key)
+            if hit:
+                return hit
+    elif isinstance(value, list):
+        for item in value:
+            hit = find_audio_url(item, key_hint)
+            if hit:
+                return hit
+    elif isinstance(value, str) and value.startswith("http") and ("audio" in key_hint.lower() or key_hint in {"url", "file_url"}):
+        return value
+    return None
+
+
+def synthesize(text: str) -> str:
+    key = require("DASHSCOPE_API_KEY")
+    voice = os.getenv("DASHSCOPE_TTS_VOICE", "longanyang")
+    endpoint = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+    response = requests.post(
+        endpoint,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "X-DashScope-Async": "enable"},
+        json={"model": "cosyvoice-v3-flash", "input": {"text": text}, "parameters": {"voice": voice, "format": "mp3", "sample_rate": 24000}},
+        timeout=45,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    task_id = payload.get("output", {}).get("task_id")
+    if not task_id:
+        audio = find_audio_url(payload)
+        if audio:
+            return audio
+        raise RuntimeError(f"语音任务未返回 task_id：{payload}")
+    for _ in range(60):
+        task = requests.get(f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+        task.raise_for_status()
+        payload = task.json()
+        status = payload.get("output", {}).get("task_status")
+        if status == "SUCCEEDED":
+            audio = find_audio_url(payload)
+            if audio:
+                return audio
+            raise RuntimeError(f"语音任务成功但未找到音频URL：{payload}")
+        if status in {"FAILED", "CANCELED"}:
+            raise RuntimeError(f"语音合成失败：{payload}")
+        time.sleep(2)
+    raise RuntimeError("语音合成超时")
+
+
+def spoken_version(script: str) -> str:
+    """来源链接留给微信阅读，不让播音员逐字念 Markdown 和 URL。"""
+    text = re.split(r"(?:^|\n)#+\s*资料来源", script, maxsplit=1)[0]
+    text = re.sub(r"!?(?:\[([^\]]+)\]\([^)]*\))", r"\1", text)
+    text = re.sub(r"[`*_#>]", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def push(title: str, script: str, audio_url: str) -> None:
+    sendkey = require("SERVERCHAN_SENDKEY")
+    desp = f"[▶ 点击收听本期晨报]({audio_url})\n\n---\n\n{script}"
+    response = requests.post(f"https://sctapi.ftqq.com/{sendkey}.send", data={"title": title, "desp": desp}, timeout=45)
+    response.raise_for_status()
+    body = response.json()
+    if body.get("code") != 0:
+        raise RuntimeError(f"方糖推送失败：{body}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true", help="只生成文字，不合成或推送")
+    args = parser.parse_args()
+    config = json.loads(CONFIG.read_text(encoding="utf-8"))
+    now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
+    client = chat_client()
+    research = collect_research(client, config["topics"], now)
+    script = write_script(client, research, int(config.get("target_chars", 1300)), now)
+    result = {"generated_at": now.isoformat(), "research": research, "script": script}
+    if not args.dry_run:
+        audio_url = synthesize(spoken_version(script))
+        result["audio_url"] = audio_url
+        push(f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", script, audio_url)
+    (ROOT / "run-output.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("完成" if not args.dry_run else "文字稿生成完成（dry-run）")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"失败：{exc}", file=sys.stderr)
+        sys.exit(1)

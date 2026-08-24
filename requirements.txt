@@ -1,3 +1,2 @@
-requests>=2.31.0
-edge-tts>=6.1.0
-openai>=1.30.0
+openai>=1.109.0,<2
+requests>=2.32.0,<3
