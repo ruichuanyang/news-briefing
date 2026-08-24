@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-每日新闻播报 bot —— 文章体重写版 (v7)
+每日新闻播报 bot —— v8（LLM 润色版）
 
-解决 three 个问题：
-1) 数据源加固：美股改 stooq(带 Yahoo 兜底)，贵金属改 gold-api + 汇率接口，
-   微博热搜多源兜底；任一路拿不到就「安静跳过」，不再出现"暂时获取不到"的破句。
-2) 彻底去掉消息来源：标题里的"新浪新闻_手机新浪网""上海交通大学 新闻网"等
-   后缀一律剥掉，全文/音频都不写不读。
-3) 话术重写：按"写一篇能听下去的文章"来组织，板块之间自然衔接，
-   不再满屏"接下来的"，条目之间用多变的自然连接词串成连贯叙述。
+相对 v7 的改动：
+1) 数据源升级：DOTA2 改用专项源（Liquipedia 近期变动）补 Google News，
+   各新闻板块候选数提高到 6~8 条，给"挑重点"留足原料，解决边角料/漏大新闻。
+2) 新增「LLM 润色层」（默认开启）：用 GitHub Models 免费模型（GPT-4o-mini / gpt-4.1）
+   从候选里挑出真正重要、值得一听的 3 条左右，改写成前后连贯、能听下去的口播。
+   完全免费、零密钥——复用 GitHub Actions 自带的 GITHUB_TOKEN（需 models: read 权限）。
+3) 失败安全：LLM 调用失败 / 没配 token / 返回异常 → 自动回退到 v7 规则引擎，
+   绝不让你早上收不到简报。
+4) 朗读清洗：新增 clean_for_tts()，在最终文本上剥掉《》""·—等会被 Edge TTS
+   误读的符号，并修复旧版 STRAY_RE 误删 "A股/X平台" 等单独字母的问题。
+
+硬约束（任何接手者都必须遵守）：
+- 文字版（md）与音频版（speech）用同一份字符串，逐字一致——先润色拼好整篇，再写 md、再喂 TTS。
+- 朗读绝不出现：来源词、网址、a href=/<font> 等 HTML 标签、被念出来的标点符号/书名号。
+- 不点名"第一条/第二条"，不堆机械过渡词，写成能听下去的一篇文章。
+- 数字读法：0.83% → "百分之零点八三"（num2cn 已校准）。
 """
 
 import os
 import re
 import html
+import json
 import asyncio
 import datetime
 import requests
@@ -39,17 +49,28 @@ VOICE_MAP = {
 }
 
 # ---------------- 文本清洗 ----------------
+
+# 广告/标题党词（不是来源词，用于候选过滤）
 CLICKBAIT = re.compile(r"(震惊|突发|速看|重磅|全网|疯传|不敢相信|万万没想到|"
                        r"点击(此处|这里|查看)|阅读原文|关注我们|扫码|福利|限时|"
                        r"夺宝|娱乐网址|博彩|彩票|澳门|现金)", re.I)
 
+# 标签 + 属性 + 十六进制色值 + 网址
 TAG_RE = re.compile(r"<\s*/?[a-zA-Z][^>]*>")
 ATTR_RE = re.compile(r"(?i)\b(?:href|target|rel|src|alt|style|color|"
                      r"width|height|class|id|title|align)\s*=\s*[^ \n<>,]*")
 HEX_RE = re.compile(r"#\s*[0-9a-fA-F]{3,8}")
 URL_RE = re.compile(r"https?://\S+|www\.\S+")
-STRAY_RE = re.compile(r"(?i)\b(?:/?(?:a|font|span|div|br|img|p|b|i|"
-                      r"u|strong|em|table|tr|td|li|ul|ol|h[1-6]))\b")
+
+# 残留标签碎片：只在「看起来像 HTML 标签」的上下文才剥，避免误删 A股 / X平台 / B站
+# 匹配：<...> 已由上 TAG_RE 处理；这里补「成对标签名」如 </a> <font> 的裸词，
+# 但限定它前后是空白/标点/行首行尾，而不是中文字之间（A 字后面是中文字就不算）。
+STRAY_RE = re.compile(
+    r"(?<=[\s>「『（(，“。、])(?:/?a|/?font|/?span|/?div|/?br|/?img|/?p|"
+    r"/?b|/?i|/?u|/?strong|/?em|/?table|/?tr|/?td|/?li|/?ul|/?ol|/?h[1-6])\b"
+    r"(?=[\s<」』）).，、:：])",
+    flags=re.I,
+)
 
 
 def clean_text(s):
@@ -63,14 +84,41 @@ def clean_text(s):
     s = URL_RE.sub(" ", s)
     s = CLICKBAIT.sub(" ", s)
     s = STRAY_RE.sub(" ", s)
-    s = s.replace(" /a", "").replace("/a", "")
-    s = s.replace(" /font", "").replace("/font", "")
     s = re.sub(r"[<>]", " ", s)
     s = re.sub(r"(?i)\b_?blank\b|\b_self\b", " ", s)
     s = re.sub(r"\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b", " ", s, flags=re.I)
     s = re.sub(r"\s*/\s*", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def clean_for_tts(text):
+    """朗读前最后一道清洗：剥掉会被 Edge TTS 误读的符号/残留，保证"听得干净"。
+
+    只动「影响语音」的东西，不动数字、不动文字内容：
+    - 《》""''「」『』 书名引号 → 去掉（避免读作"左书名号"）
+    - · — – … 等符号 → 去掉或替换（避免读作"间隔号/破折号"）
+    - 仍兜底：残留的 < > 标签、网址、HTML 实体
+    """
+    if not text:
+        return ""
+    text = html.unescape(text)
+    # 先清标签/网址（兜底）
+    text = TAG_RE.sub(" ", text)
+    text = ATTR_RE.sub(" ", text)
+    text = HEX_RE.sub(" ", text)
+    text = URL_RE.sub(" ", text)
+    text = STRAY_RE.sub(" ", text)
+    text = re.sub(r"[<>]", " ", text)
+    # 书名号、引号、方头括号 → 直接去掉（不要留白导致粘连，用空）
+    text = re.sub(r"[《》「」『』“”‘’]", "", text)
+    # 间隔号 · 去掉；破折号/连接号 — – 去掉；省略号 … 去掉
+    text = text.replace("·", "").replace("—", "").replace("–", "").replace("…", "")
+    # 中文顿号、逗号、句号、问号、感叹号、冒号、分号 都是合法断句标点，Edge TTS 不读，保留
+    # 英文标点转中文或去掉（避免读成 "comma"）
+    text = text.replace(",", "，").replace(";", "；").replace(":", "：")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 # 常见来源词（作为标题尾巴时一律剥除，绝不写出/读出）
@@ -161,10 +209,6 @@ def num2cn(x):
     return ("负" if neg else "") + s
 
 
-def count2cn(n):
-    return {1: "一", 2: "两", 3: "三", 4: "四", 5: "五"}.get(n, num2cn(n))
-
-
 # ---------------- 数据源（全部免费、无需 key）----------------
 
 def fetch_stocks():
@@ -246,8 +290,8 @@ def fetch_metals():
         return None
 
 
-def fetch_news(q, max_items=3):
-    """Google News 中文 RSS；标题剥来源，绝不带回'新浪新闻'等字眼。"""
+def _google_news(q, max_items=6):
+    """Google News 中文 RSS；标题剥来源。返回 [(title, desc), ...]。"""
     try:
         url = (f"https://news.google.com/rss/search?q={quote(q)}"
                f"&hl=zh-CN&gl=CN&ceid=CN:zh-Hans")
@@ -269,6 +313,49 @@ def fetch_news(q, max_items=3):
     except Exception as e:
         print(f"[news] {q} 失败: {e}")
         return []
+
+
+def fetch_news(q, max_items=6):
+    """对外新闻抓取：直接用 Google News RSS（候选数提到 6 条）。"""
+    return _google_news(q, max_items=max_items)
+
+
+def fetch_dota2_news(max_items=8):
+    """DOTA2 专项源：优先 Liquipedia 近 48 小时变动页（赛事/战队权威），
+    不足或失败时补 Google News『DOTA2 比赛 夺冠 战队 TI』。
+    返回 [(title, desc), ...]，标题已清洗去来源。"""
+    out = []
+    try:
+        # Liquipedia 的「近期变动」页面，含战队、赛事、选手动态
+        url = ("https://liquipedia.net/dota2/api.php?action=feedrecentchanges"
+               "&feedformat=atom&hours=48&limit=50")
+        r = requests.get(url, headers=UA, timeout=20)
+        feed = re.findall(r"<title>(.*?)</title>", r.text, flags=re.S)
+        for t in feed:
+            t = clean_text(t)
+            if not t or t.lower().startswith("mediawiki") or "recent changes" in t.lower():
+                continue
+            if CLICKBAIT.search(t):
+                continue
+            out.append((t, ""))
+            if len(out) >= max_items:
+                break
+        print(f"[dota2] Liquipedia 抓到 {len(out)} 条")
+    except Exception as e:
+        print(f"[dota2] Liquipedia 失败: {e}")
+
+    # 不足则补 Google News 专项查询（夺冠/战队/TI 等关键词，命中大新闻概率更高）
+    if len(out) < 4:
+        extra = _google_news("DOTA2 比赛 夺冠 战队 TI", max_items=8)
+        seen = {t for t, _ in out}
+        for t, d in extra:
+            if t not in seen:
+                out.append((t, d))
+                seen.add(t)
+            if len(out) >= max_items:
+                break
+        print(f"[dota2] 补 Google News 后共 {len(out)} 条")
+    return out[:max_items]
 
 
 def fetch_weibo_hot(max_items=5):
@@ -334,7 +421,68 @@ def fetch_mom_tips():
     return [(tip, "")]
 
 
-# ---------------- 文章体叙述 ----------------
+# ---------------- LLM 润色层（v8 新增）----------------
+
+def call_llm(messages, model, timeout=40):
+    """调用 GitHub Models 免费推理接口（OpenAI 兼容）。
+
+    认证：复用 GitHub Actions 自带的 GITHUB_TOKEN（需 workflow 配 models: read）。
+    本地没有 token 时直接抛异常，由上层回退到规则引擎。
+    免费档限制：gpt-4o-mini 约 15 请求/分、150 请求/天、8K 入 / 4K 出 token。
+    """
+    import openai
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        raise RuntimeError("无 GITHUB_TOKEN，跳过 LLM 润色")
+    client = openai.OpenAI(
+        api_key=token,
+        base_url="https://models.github.ai/inference",
+    )
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.4,
+        max_tokens=900,
+        timeout=timeout,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+SYS_PROMPT = (
+    "你是一个中文新闻简报的口播编辑。用户开车时收听，要求："
+    "1) 从提供的候选新闻里挑出【最值得听、最重要】的 3 条左右，跳过边角料、广告、标题党；"
+    "2) 用自然流畅、前后连贯的中文口播写成一段（不要分点、不要出现'第一条/第二条'、"
+    "不要出现'接下来的'等机械过渡词），像真人主播在说话；"
+    "3) 不要出现任何来源媒体名、网址、HTML 标签或书名号；"
+    "4) 数字和百分比照原样保留（如 0.83%），不要自己改成中文读法；"
+    "5) 总字数控制在 200 字以内，信息密度高、不啰嗦。"
+    "只输出改写后的口播正文，不要任何解释、前缀或 Markdown 格式。"
+)
+
+
+def polish_news_with_llm(cat_name, candidates, model):
+    """给定板块名 + 候选新闻，让模型挑重点并改写成口播。失败抛异常由上层处理。"""
+    if not candidates:
+        raise RuntimeError("无候选可润色")
+    lines = []
+    for i, (t, d) in enumerate(candidates[:8], 1):
+        line = f"{i}. 标题：{t}"
+        if d:
+            line += f"；摘要：{d}"
+        lines.append(line)
+    user = (f"板块：{cat_name}。以下是抓到的候选新闻（已去来源、去广告），"
+            f"请挑重点改写成口播：\n" + "\n".join(lines))
+    out = call_llm(
+        [{"role": "system", "content": SYS_PROMPT},
+         {"role": "user", "content": user}],
+        model,
+    )
+    if not out or len(out) < 10:
+        raise RuntimeError("LLM 返回过短，疑似异常")
+    return out
+
+
+# ---------------- 规则引擎（v7 保留，作为 LLM 失败回退）----------------
 
 CATS = [
     ("财经", ["美股", "比特币", "黄金白银", "A股", "港股", "基金", "原油", "外汇", "债券"]),
@@ -346,7 +494,6 @@ CATS = [
     ("物理", ["物理", "物理学", "物理学前沿", "科学前沿"]),
 ]
 
-# 各板块开场白：直接切题，绝不用"接下来"
 OPENERS = {
     "游戏": {
         "DOTA2": "电竞这块先说《DOTA2》，今天有几条值得一聊的消息。",
@@ -456,7 +603,43 @@ def map_topic(t):
     }.get(t, t)
 
 
-def build_briefing(topics):
+def compose_news_rule(cat, matched):
+    """v7 规则引擎拼装一个非财经板块（娱乐/国际/母婴/AI/物理/游戏）。
+    作为 LLM 不可用时的回退。"""
+    if cat == "游戏":
+        parts = []
+        for t in matched:
+            if t == "DOTA2":
+                items = fetch_dota2_news()
+            elif t == "单机游戏":
+                items = fetch_news("单机游戏 新作 发售", max_items=6)
+            else:
+                items = fetch_news(map_topic(t), max_items=6)
+            parts.append(narrate(items, OPENERS["游戏"].get(t, OPENERS["游戏"]["_default"])))
+        return "".join(parts)
+    if cat == "娱乐":
+        return narrate(fetch_weibo_hot(),
+                       "娱乐方面，今天微博热搜榜上有几个话题热度很高，我们来聊几个。")
+    if cat == "母婴":
+        return narrate(fetch_mom_tips(),
+                       "忙碌之中，也给准妈妈们留一段实用提醒：")
+    if cat == "物理":
+        return narrate(fetch_news("物理学 科研 突破 研究发现", max_items=6),
+                       "最后，用一则科学前沿的消息收个尾。")
+    # 国际 / AI
+    if cat in OPENERS:
+        parts = []
+        for t in matched:
+            q = map_topic(t)
+            parts.append(narrate(fetch_news(q, max_items=6),
+                                 OPENERS[cat].get(t, OPENERS[cat]["_default"])))
+        return "".join(parts)
+    return ""
+
+
+# ---------------- 文章体组装 ----------------
+
+def build_briefing(topics, llm_on=True, llm_model="gpt-4o-mini"):
     bj = datetime.timezone(datetime.timedelta(hours=8))
     now = datetime.datetime.now(bj)
     today = f"{now.year}年{now.month}月{now.day}日"
@@ -471,6 +654,7 @@ def build_briefing(topics):
         matched = [t for t in topics if t in keys]
         if not matched:
             continue
+
         if cat == "财经":
             stock_rows = fetch_stocks() if "美股" in matched else []
             btc = fetch_btc() if "比特币" in matched else None
@@ -479,32 +663,53 @@ def build_briefing(topics):
             for t in matched:
                 if t in ("美股", "比特币", "黄金白银"):
                     continue
-                speech.append(narrate(fetch_news(t),
-                                      FIN_OPENER.get(t, FIN_OPENER["_default"])))
-        elif cat == "娱乐":
-            speech.append(narrate(
-                fetch_weibo_hot(),
-                "娱乐方面，今天微博热搜榜上有几个话题热度很高，我们来聊几个。"))
-        elif cat == "母婴":
-            speech.append(narrate(
-                fetch_mom_tips(),
-                "忙碌之中，也给准妈妈们留一段实用提醒："))
-        elif cat == "物理":
-            speech.append(narrate(
-                fetch_news("物理学 科研 突破 研究发现", max_items=1),
-                "最后，用一则科学前沿的消息收个尾。"))
-        else:
-            for t in matched:
-                q = map_topic(t)
                 speech.append(narrate(
-                    fetch_news(q),
-                    OPENERS[cat].get(t, OPENERS[cat]["_default"])))
+                    fetch_news(t, max_items=6),
+                    FIN_OPENER.get(t, FIN_OPENER["_default"])))
+            continue
+
+        # —— 非财经板块：优先 LLM 润色，失败回退规则引擎 ——
+        if cat == "游戏":
+            candidates = []
+            for t in matched:
+                if t == "DOTA2":
+                    candidates += fetch_dota2_news()
+                elif t == "单机游戏":
+                    candidates += fetch_news("单机游戏 新作 发售", max_items=6)
+                else:
+                    candidates += fetch_news(map_topic(t), max_items=6)
+        elif cat == "娱乐":
+            candidates = fetch_weibo_hot()
+        elif cat == "母婴":
+            candidates = fetch_mom_tips()
+        elif cat == "物理":
+            candidates = fetch_news("物理学 科研 突破 研究发现", max_items=6)
+        else:  # 国际 / AI
+            candidates = []
+            for t in matched:
+                candidates += fetch_news(map_topic(t), max_items=6)
+
+        seg = ""
+        if llm_on:
+            try:
+                seg = polish_news_with_llm(cat, candidates, llm_model)
+                print(f"[llm][{cat}] 润色成功，{len(seg)} 字")
+            except Exception as e:
+                print(f"[llm][{cat}] 不可用，回退规则引擎: {e}")
+                seg = ""
+        if not seg:
+            seg = compose_news_rule(cat, matched)
+        speech.append(seg)
 
     speech.append(
         "以上就是今天的新闻播报。感谢您的收听，祝您一天好心情，"
         "我们明天同一时间再会。")
+
+    # 关键：文字版与音频版共用同一个字符串
     text = "".join(speech)
-    return text, text  # 文字版 == 音频版，逐字一致
+    # 朗读前清洗（剥书名号/引号/间隔号等会被 TTS 误读的符号 + 兜底标签网址）
+    speech_clean = clean_for_tts(text)
+    return text, speech_clean
 
 
 # ---------------- TTS / 配置 / 推送 ----------------
@@ -517,18 +722,24 @@ async def tts(text, out_path, voice_key, rate="+0%"):
 
 def load_config(path="config.txt"):
     topics, voice, rate = [], "yunxi", "+0%"
+    llm_on, llm_model = True, "gpt-4o-mini"
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if line.lower().startswith("voice="):
+            low = line.lower()
+            if low.startswith("voice="):
                 voice = line.split("=", 1)[1].strip() or "yunxi"
-            elif line.lower().startswith("rate="):
+            elif low.startswith("rate="):
                 rate = line.split("=", 1)[1].strip() or "+0%"
+            elif low.startswith("llm="):
+                llm_on = line.split("=", 1)[1].strip().lower() in ("on", "1", "true", "yes", "开")
+            elif low.startswith("llm_model="):
+                llm_model = line.split("=", 1)[1].strip() or "gpt-4o-mini"
             else:
                 topics.append(line)
-    return topics, voice, rate
+    return topics, voice, rate, llm_on, llm_model
 
 
 def push(text, audio_url=None):
@@ -550,11 +761,14 @@ def push(text, audio_url=None):
 
 def main():
     os.makedirs("public", exist_ok=True)
-    topics, voice, rate = load_config()
-    md, speech = build_briefing(topics)
+    topics, voice, rate, llm_on, llm_model = load_config()
+    md, speech = build_briefing(topics, llm_on=llm_on, llm_model=llm_model)
+
+    # 文字版（md）：保留完整版（含书名号等，便于阅读）
     with open("public/briefing.md", "w", encoding="utf-8") as f:
         f.write(md)
 
+    # 音频版（speech）：已做朗读清洗
     mp3 = "public/briefing.mp3"
     try:
         asyncio.run(tts(speech, mp3, voice, rate))
