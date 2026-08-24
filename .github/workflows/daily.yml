@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  models: read        # v8 新增：允许 GitHub Models 免费推理（LLM 润色层）
 
 jobs:
   build:
@@ -26,6 +27,7 @@ jobs:
       - name: 生成简报 + 朗读音频
         env:
           SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python main.py
 
       - name: 发布音频到 GitHub Pages
