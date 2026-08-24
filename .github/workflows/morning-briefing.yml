@@ -22,10 +22,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: 生成并推送晨报
         env:
-          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
-          DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
-          DASHSCOPE_WORKSPACE_ID: ${{ secrets.DASHSCOPE_WORKSPACE_ID }}
-          DASHSCOPE_TTS_VOICE: ${{ secrets.DASHSCOPE_TTS_VOICE }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python src/morning_briefing.py
