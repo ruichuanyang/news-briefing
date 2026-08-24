@@ -2,6 +2,15 @@
   "edition_name": "每日早报",
   "timezone": "Asia/Shanghai",
   "target_chars": 1300,
+  "llm": {
+    "provider": "zhipu",
+    "model": "glm-4-flash",
+    "base_url": "https://open.bigmodel.cn/api/paas/v4"
+  },
+  "tts": {
+    "provider": "edge",
+    "voice": "zh-CN-XiaoxiaoNeural"
+  },
   "topics": [
     {"name": "Dota 2", "instructions": "赛事、版本、职业圈与重大社区动态；没有可靠进展时简述即可。"},
     {"name": "美股", "instructions": "主要指数、重要公司、宏观数据与市场驱动；给出数字和日期。"},
