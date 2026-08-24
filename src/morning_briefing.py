@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """AI-first daily news briefing: search -> verify/select -> write -> TTS -> ServerChan."""
 import argparse
+import base64
+import html
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -169,14 +173,134 @@ def spoken_version(script: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def push(title: str, script: str, audio_url: str) -> None:
+def push(title: str, script: str, audio_url: str, player_url: str | None = None) -> None:
     sendkey = require("SERVERCHAN_SENDKEY")
-    desp = f"[▶ 点击收听本期晨报]({audio_url})\n\n---\n\n{script}"
+    listen = player_url or audio_url
+    extra = ""
+    if player_url and player_url != audio_url:
+        extra = f"\n\n[备用下载链接（播放页打不开时用）]({audio_url})"
+    desp = f"[▶ 点击打开播放页收听本期晨报]({listen}){extra}\n\n---\n\n{script}"
     response = requests.post(f"https://sctapi.ftqq.com/{sendkey}.send", data={"title": title, "desp": desp}, timeout=45)
     response.raise_for_status()
     body = response.json()
     if body.get("code") != 0:
         raise RuntimeError(f"方糖推送失败：{body}")
+
+
+def download_audio(url: str) -> bytes:
+    """下载百炼返回的临时音频字节，用于二次托管到可播放页面（同时规避 24h 过期）。"""
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    return r.content
+
+
+def build_player_html(date: str, title: str, mp3_url: str, script: str) -> str:
+    """生成一个手机端友好的播报页：内嵌 <audio> 播放器，点开即播，不再强制下载。"""
+    safe = html.escape(script)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{html.escape(title)}</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; color: #1f2329; }}
+  .wrap {{ max-width: 680px; margin: 0 auto; padding: 24px 18px 48px; }}
+  .card {{ background: #fff; border-radius: 18px; padding: 22px; box-shadow: 0 6px 24px rgba(0,0,0,.06); }}
+  h1 {{ font-size: 20px; margin: 0 0 4px; }}
+  .date {{ color: #8a9099; font-size: 13px; margin-bottom: 14px; }}
+  audio {{ width: 100%; margin-top: 6px; }}
+  .tip {{ color: #8a9099; font-size: 12.5px; margin-top: 10px; line-height: 1.6; }}
+  .script {{ white-space: pre-wrap; line-height: 1.85; font-size: 15.5px; margin-top: 22px;
+            padding-top: 18px; border-top: 1px solid #eef0f3; }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>📻 {html.escape(title)}</h1>
+      <div class="date">每日 AI 晨报 · {date}</div>
+      <audio controls preload="auto" src="{mp3_url}"></audio>
+      <p class="tip">点击播放即可收听。需要离线收藏可长按音频选择“下载”。</p>
+    </div>
+    <div class="script">{safe}</div>
+  </div>
+</body>
+</html>
+"""
+
+
+REPO = os.getenv("GITHUB_REPOSITORY") or "ruichuanyang/news-briefing"
+
+
+def _gh_api(method: str, path: str, body: dict | None = None) -> dict:
+    """用 gh CLI 调用 GitHub API（ Actions 中由 GITHUB_TOKEN 自动鉴权）。"""
+    cmd = ["gh", "api", f"--method", method, f"repos/{REPO}/{path}"]
+    tmp_name = None
+    if body is not None:
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(body, tmp, ensure_ascii=False)
+        tmp.close()
+        tmp_name = tmp.name
+        cmd += ["--input", tmp_name]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True)
+    finally:
+        if tmp_name:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+    if out.returncode != 0:
+        raise RuntimeError(f"gh {method} {path} 失败: {out.stderr.strip()[:400]}")
+    return json.loads(out.stdout) if out.stdout.strip() else {}
+
+
+def publish_to_ghpages(date: str, mp3_bytes: bytes, html: str) -> str:
+    """把 MP3 与播放页发布到 gh-pages 分支，返回 jsDelivr 播放页 URL（https，国内可达）。"""
+    token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise RuntimeError("缺少 GH_TOKEN，无法发布播放页")
+    os.environ["GH_TOKEN"] = token
+    # 确保 gh-pages 分支存在
+    try:
+        exists = _gh_api("GET", "branches/gh-pages").get("name") == "gh-pages"
+    except Exception:
+        exists = False
+    if not exists:
+        base = _gh_api("GET", "git/refs/heads/main")["object"]["sha"]
+        _gh_api("POST", "git/refs", {"ref": "refs/heads/gh-pages", "sha": base})
+    mp3_b64 = base64.b64encode(mp3_bytes).decode()
+    html_b64 = base64.b64encode(html.encode("utf-8")).decode()
+    for path, content in [(f"audio/{date}.mp3", mp3_b64), (f"audio/{date}.html", html_b64)]:
+        sha = None
+        try:
+            sha = _gh_api("GET", f"contents/{path}?ref=gh-pages").get("sha")
+        except Exception:
+            pass
+        body = {"message": f"audio {date}", "content": content, "branch": "gh-pages"}
+        if sha:
+            body["sha"] = sha
+        _gh_api("PUT", f"contents/{path}", body)
+    return f"https://cdn.jsdelivr.net/gh/{REPO}@gh-pages/audio/{date}.html"
+
+
+def prune_old_audio(date: str, keep_days: int = 14) -> None:
+    """清理 14 天前的音频，避免 gh-pages 无限膨胀。"""
+    try:
+        listing = _gh_api("GET", "contents/audio?ref=gh-pages")
+        cutoff = (datetime.now(ZoneInfo("Asia/Shanghai")).date() - timedelta(days=keep_days)).strftime("%Y%m%d")
+        for item in listing:
+            name = item.get("name", "")
+            if name.endswith(".mp3") and name[:8] < cutoff:
+                sha = item.get("sha")
+                if sha:
+                    _gh_api("DELETE", f"contents/audio/{name}",
+                            {"message": f"prune {name}", "sha": sha, "branch": "gh-pages"})
+    except Exception as exc:
+        print(f"清理旧音频跳过：{exc}", file=sys.stderr)
 
 
 def main() -> None:
@@ -192,7 +316,20 @@ def main() -> None:
     if not args.dry_run:
         audio_url = synthesize(spoken_version(script))
         result["audio_url"] = audio_url
-        push(f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", script, audio_url)
+        player_url = None
+        date = now.strftime("%Y%m%d")
+        try:
+            mp3_bytes = download_audio(audio_url)
+            mp3_url = f"https://cdn.jsdelivr.net/gh/{REPO}@gh-pages/audio/{date}.mp3"
+            html = build_player_html(date, f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", mp3_url, script)
+            player_url = publish_to_ghpages(date, mp3_bytes, html)
+            result["player_url"] = player_url
+            result["mp3_url"] = mp3_url
+            prune_old_audio(date)
+            print(f"播放页已发布：{player_url}")
+        except Exception as exc:
+            print(f"发布播放页失败，回退到原始音频链接：{exc}", file=sys.stderr)
+        push(f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}", script, audio_url, player_url)
     (ROOT / "run-output.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print("完成" if not args.dry_run else "文字稿生成完成（dry-run）")
 
