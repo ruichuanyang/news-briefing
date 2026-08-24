@@ -185,13 +185,17 @@ def _synthesize_cosyvoice(text: str) -> bytes:
 
 
 def _synthesize_edge(text: str, voice: str) -> bytes:
-    """微软 Edge TTS：免费、无需密钥。流式累积音频字节后返回。"""
+    """微软 Edge TTS：免费、无需密钥。流式累积音频字节后返回。
+
+    edge-tts >=7 的 stream() 产出字典（如 {"type":"audio","data":bytes}），
+    旧版才是 (type, data) 元组；这里按字典解析，兼容 7.x。
+    """
     async def _run() -> bytes:
         buf = bytearray()
         communicate = edge_tts.Communicate(text, voice)
-        async for kind, data in communicate.stream():
-            if kind == "audio":
-                buf.extend(data)
+        async for chunk in communicate.stream():
+            if isinstance(chunk, dict) and chunk.get("type") == "audio":
+                buf.extend(chunk.get("data") or b"")
         return bytes(buf)
     return asyncio.run(_run())
 
@@ -373,8 +377,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import traceback
     try:
         main()
     except Exception as exc:
         print(f"失败：{exc}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)
