@@ -78,25 +78,107 @@ def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
     return content.strip()
 
 
+def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> list[dict]:
+    """直接调用智谱 Completions 的 web_search 工具（原始 HTTP，非流式）。
+
+    智谱把真实搜索结果放在响应**顶层 web_search 字段**（OpenAI SDK 会丢弃未知顶层字段，
+    且流式模式不回传该字段），所以必须用 requests 拿原始响应。
+    返回规范化后的 [{title, link, date, content}]。
+    """
+    key = require("ZHIPU_API_KEY")
+    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    today = now.strftime("%Y年%m月%d日") if now else ""
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": f"今天是{today}。请联网搜索并整理以下主题的最新信息：{query}",
+        }],
+        "tools": [{
+            "type": "web_search",
+            "web_search": {
+                "enable": "True",
+                "search_engine": "search_pro",
+                "search_result": "True",
+                "search_query": query,
+                "count": count,
+                "search_recency_filter": "noLimit",
+                "content_size": "high",
+            },
+        }],
+        "tool_choice": "auto",
+        "temperature": 0.2,
+    }
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    response.raise_for_status()
+    data = response.json()
+    results = []
+    for item in data.get("web_search") or []:
+        title = re.sub(r"\s+", " ", str(item.get("title", "") or "")).strip()
+        content = re.sub(r"\s+", " ", str(item.get("content", "") or "")).strip()
+        if not title and not content:
+            continue
+        results.append({
+            "title": title,
+            "link": str(item.get("link", "") or "").strip(),
+            "date": str(item.get("publish_date", "") or "").strip(),
+            "content": content[:400],
+        })
+    return results
+
+
 def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
-    topic_text = "\n".join(f"- {x['name']}：{x['instructions']}" for x in topics)
-    return ask_model(
-        client,
-        "你是一名严谨的中文新闻研究编辑。你必须主动联网搜索，不能以记忆或想象填补事实。"
-        "先检索当日及过去36小时的信息，优先官方、原始论文、交易所、公司公告和主流媒体。"
-        "交叉核查日期、数字、名称。无法证实、来源不明、八卦传言一律舍弃。",
-        f"现在是 {now:%Y-%m-%d %H:%M}（{now.tzname()}）。为以下栏目做研究备忘：\n{topic_text}\n\n"
-        "每个栏目最多保留2条最有价值的事实。每条写成：标题｜发生/发布的准确时间｜2-3句事实｜来源名称与URL。"
-        "没有可靠新内容就明确写‘今日无可靠更新’，绝不凑数。价格必须说明品种、币种、时间和数据源。",
-        web=True,
-    )
+    if LLM_PROVIDER == "qwen":
+        # 旧路径：百炼 enable_search（保留回退）。
+        topic_text = "\n".join(f"- {x['name']}：{x['instructions']}" for x in topics)
+        return ask_model(
+            client,
+            "你是一名严谨的中文新闻研究编辑。你必须主动联网搜索，不能以记忆或想象填补事实。"
+            "先检索当日及过去36小时的信息，优先官方、原始论文、交易所、公司公告和主流媒体。"
+            "交叉核查日期、数字、名称。无法证实、来源不明、八卦传言一律舍弃。",
+            f"现在是 {now:%Y-%m-%d %H:%M}（{now.tzname()}）。为以下栏目做研究备忘：\n{topic_text}\n\n"
+            "每个栏目最多保留2条最有价值的事实。每条写成：标题｜发生/发布的准确时间｜2-3句事实｜来源名称与URL。"
+            "没有可靠新内容就明确写'今日无可靠更新'，绝不凑数。价格必须说明品种、币种、时间和数据源。",
+            web=True,
+        )
+    # 智谱路径：逐栏目显式联网搜索，直接读取顶层 web_search 字段的真实结果，
+    # 不再依赖模型自述（GLM-4-Flash 常忽略搜索结果、凭训练数据编造）。
+    memo = []
+    for topic in topics:
+        name = topic["name"]
+        query = (topic.get("search_query") or f"{name} 今日新闻").format(
+            date=now.strftime("%Y年%m月%d日"), short=now.strftime("%m月%d日")
+        )
+        results = zhipu_search(query, count=int(topic.get("count", 5)), now=now)
+        lines = [f"- {name}："]
+        if not results:
+            lines.append("  - 今日无可靠更新｜--｜联网搜索未返回可用结果｜--")
+        else:
+            seen = set()
+            kept = 0
+            for r in results:
+                key = (r["title"] or r["content"])[:40]
+                if key in seen:
+                    continue
+                seen.add(key)
+                lines.append(
+                    f"  - {r['title'] or '（无标题）'}｜{r['date'] or '--'}｜{r['content'][:160]}｜{r['link'] or '--'}"
+                )
+                kept += 1
+                if kept >= 3:
+                    break
+        memo.append("\n".join(lines))
+    return "\n\n".join(memo)
 
 
 def write_script(client: OpenAI, research: str, target_chars: int, now: datetime) -> str:
     return ask_model(
         client,
         "你是中文广播新闻节目的资深主编。把研究备忘写成一篇自然、克制、适合早晨收听的完整口播稿。"
-        "事实只可来自备忘；不确定就不说。绝不编造标题、来源、数字或因果。",
+        "事实只可来自备忘；不确定就不说。绝不编造标题、来源、数字或因果。"
+        "时间、价格、数字必须与备忘逐字一致，禁止补数、改数；宁可说'暂无数据'。"
+        "优先采用日期最新的条目；备忘标'今日无可靠更新'的栏目一句话带过即可，不展开。",
         f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
         "正常语速约6分钟，绝不超过10分钟。\n\n"
         "写作要求：\n1. 用一个简洁开场串起全篇，再按‘市场与科技—Dota2—文娱—深圳与科学’自然过渡，"
