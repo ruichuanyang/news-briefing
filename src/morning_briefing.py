@@ -79,53 +79,56 @@ def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
 
 
 def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> list[dict]:
-    """直接调用智谱 Completions 的 web_search 工具（原始 HTTP，非流式）。
+    """智谱独立 Web Search API：直接返回结构化搜索结果，不经过 LLM 生成。
 
-    智谱把真实搜索结果放在响应**顶层 web_search 字段**（OpenAI SDK 会丢弃未知顶层字段，
-    且流式模式不回传该字段），所以必须用 requests 拿原始响应。
-    返回规范化后的 [{title, link, date, content}]。
+    走 /paas/v4/web_search（比 chat/completions+web_search 工具更快、更便宜，
+    后者会让 GLM 额外生成一大段正文、容易超时，且结果在顶层 web_search 字段、
+    流式模式丢失）。返回规范化后的 [{title, link, date, content}]。
     """
     key = require("ZHIPU_API_KEY")
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    today = now.strftime("%Y年%m月%d日") if now else ""
     payload = {
-        "model": LLM_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": f"今天是{today}。请联网搜索并整理以下主题的最新信息：{query}",
-        }],
-        "tools": [{
-            "type": "web_search",
-            "web_search": {
-                "enable": "True",
-                "search_engine": "search_pro",
-                "search_result": "True",
-                "search_query": query,
-                "count": count,
-                "search_recency_filter": "noLimit",
-                "content_size": "high",
-            },
-        }],
-        "tool_choice": "auto",
-        "temperature": 0.2,
+        "search_query": query[:70],
+        "search_engine": "search_pro",
+        "search_intent": False,
+        "count": max(1, min(count, 10)),
+        # 晨报要时效：一个月内（oneDay 太激进，多栏目会整片空结果）
+        "search_recency_filter": "oneMonth",
+        "content_size": "medium",
     }
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
-    data = response.json()
-    results = []
-    for item in data.get("web_search") or []:
-        title = re.sub(r"\s+", " ", str(item.get("title", "") or "")).strip()
-        content = re.sub(r"\s+", " ", str(item.get("content", "") or "")).strip()
-        if not title and not content:
-            continue
-        results.append({
-            "title": title,
-            "link": str(item.get("link", "") or "").strip(),
-            "date": str(item.get("publish_date", "") or "").strip(),
-            "content": content[:400],
-        })
-    return results
+    last_err = ""
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                "https://open.bigmodel.cn/api/paas/v4/web_search",
+                headers=headers, json=payload, timeout=60,
+            )
+            if response.status_code == 429 or response.status_code >= 500:
+                last_err = f"HTTP {response.status_code}"
+                time.sleep(2 * (attempt + 1))
+                continue
+            response.raise_for_status()
+            data = response.json()
+            results = []
+            for item in data.get("search_result") or []:
+                title = re.sub(r"\s+", " ", str(item.get("title", "") or "")).strip()
+                content = re.sub(r"\s+", " ", str(item.get("content", "") or "")).strip()
+                if not title and not content:
+                    continue
+                results.append({
+                    "title": title,
+                    "link": str(item.get("link", "") or "").strip(),
+                    "date": str(item.get("publish_date", "") or "").strip(),
+                    "content": content[:400],
+                })
+            if results:
+                return results
+            last_err = "empty result"
+            time.sleep(2 * (attempt + 1))
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_err = str(exc)
+            time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"智谱 web_search 失败（{last_err}）")
 
 
 def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
