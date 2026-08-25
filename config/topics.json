@@ -15,7 +15,7 @@
     {
       "name": "Dota 2",
       "instructions": "赛事、版本、职业圈与重大社区动态；没有可靠进展时简述即可。",
-      "search_query": "{short} Dota2 赛事 版本 更新 新闻",
+      "search_query": "{short} Dota2 最新赛事 战报 结果 新闻",
       "count": 4
     },
     {
@@ -33,19 +33,19 @@
     {
       "name": "AI前沿",
       "instructions": "重要模型、研究、产品或监管；优先一手来源。",
-      "search_query": "{short} AI 大模型 发布 新闻",
+      "search_query": "{short} AI 大模型 发布 最新新闻",
       "count": 5
     },
     {
       "name": "国内娱乐",
       "instructions": "仅报道有可靠媒体或当事人来源支持的动态，不传播未经证实的私生活传言。",
-      "search_query": "{short} 国内 电影 综艺 官方 新闻",
+      "search_query": "{short} 国内 电影 综艺 官方 最新新闻",
       "count": 4
     },
     {
       "name": "国际娱乐",
       "instructions": "仅报道有可靠媒体或当事人来源支持的动态，不传播未经证实的私生活传言。",
-      "search_query": "{short} 好莱坞 国际 娱乐 电影 新闻",
+      "search_query": "{short} 好莱坞 国际 娱乐 电影 最新新闻",
       "count": 4
     },
     {
