@@ -102,11 +102,11 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     payload = {
         "search_query": query[:70],
-        "search_engine": "search_pro",
+        "search_engine": "search_std",  # 改：基础版 ¥0.01/次，比 search_pro 便宜 3 倍
         "search_intent": False,
         "count": max(1, min(count, 10)),
-        # 晨报要时效：一个月内（oneDay 太激进，多栏目会整片空结果）
-        "search_recency_filter": "oneMonth",
+        # 时效窗口收窄到近 7 天，避免把一个月前的旧文/赛前预告当新闻
+        "search_recency_filter": "oneWeek",
         "content_size": "medium",
     }
     last_err = ""
@@ -135,7 +135,13 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
                     "content": content[:400],
                 })
             if results:
-                # 时效窗口：只保留 14 天内的结果，防止搜索引擎把旧文/过期价格当新内容返回
+                # ① 按发布日期倒序：搜索接口默认按“相关度”返回，未必是时间顺序，
+                # 必须自己排，否则会选中陈旧的“赛前预告”（如赛事已结束却报“即将开打”）。
+                results.sort(
+                    key=lambda r: _parse_date(r["date"]) or datetime(2000, 1, 1),
+                    reverse=True,
+                )
+                # ② 软时效：丢弃超过 14 天的明显旧闻（如去年的文章），但排序已保证优先用最新
                 cutoff = (now.date() - timedelta(days=14)) if now else None
                 if cutoff:
                     results = [
@@ -175,7 +181,7 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
             date=now.strftime("%Y年%m月%d日"), short=now.strftime("%m月%d日")
         )
         results = zhipu_search(query, count=int(topic.get("count", 5)), now=now)
-        lines = [f"- {name}："]
+        lines = [f"- {name}：（以下按发布时间从新到旧排列，优先采用最上方条目）"]
         if not results:
             lines.append("  - 今日无可靠更新｜--｜联网搜索未返回可用结果｜--")
         else:
@@ -235,9 +241,11 @@ def postprocess_script(script: str, research: str) -> str:
     return head + "\n".join(lines)
 
 
+_BANNED_FUTURE = re.compile(r"即将开打|即将开赛|将开打|开赛在即|即将开赛|将开赛|即将举行|即将开")
+
+
 def write_script(client: OpenAI, research: str, target_chars: int, now: datetime) -> str:
-    return ask_model(
-        client,
+    sys_prompt = (
         "你是中文广播新闻节目的资深主编。把研究备忘改写成一篇自然、克制、适合早晨收听的完整口播稿（Markdown）。\n"
         "硬性要求：\n"
         "1. 覆盖全部栏目：Dota2、美股、黄金白银、AI前沿、国内娱乐、国际娱乐、物理学前沿、深圳本地头条。"
@@ -246,7 +254,11 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "3. 严禁罗列备忘原文：禁止出现'｜'竖线分隔、禁止'标题｜日期｜内容'式清单，全部改写成连贯的广播语言。\n"
         "4. 文末'资料来源'小节：只逐字复制备忘中真实出现的链接（URL）并附来源名；备忘里没有链接的栏目不列入，"
         "绝不编造域名或猜测网址。\n"
-        "5. 优先采用日期最新的条目。",
+        "5. 优先采用日期最新的条目；备忘条目已按发布时间从新到旧排列，最上方即最新。\n"
+        "6. 凡同一事件若同时出现'赛前预告'与'赛后结果'，必须采用赛后结果；若最新结果已表明事件结束"
+        "（如'夺冠''决赛结束''冠军产生''X队胜出'），严禁使用'即将开打/即将开赛/将开打/开赛在即'等未来时态表述。"
+    )
+    user_prompt = (
         f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
         "正常语速约6分钟，绝不超过10分钟。\n\n"
         "写作要求：\n1. 用一个简洁开场串起全篇，按'市场（美股/黄金白银/科技/AI）—Dota2—文娱—深圳与科学'自然过渡。"
@@ -254,9 +266,19 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "美股必须报出主要指数点位或涨跌幅数字。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
         "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
         "4. 不要写'资料来源'小节，来源链接会由系统自动附加到文末。\n"
-        "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research,
-        web=False,
+        "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research
     )
+    script = ask_model(client, sys_prompt, user_prompt, web=False)
+    # 兜底：备忘已有赛果，成稿却写“即将开打”——说明用了陈旧预告，强制重生成一次
+    if _BANNED_FUTURE.search(script) and re.search(r"夺冠|冠军产生|决赛结束|最终夺冠|捧起冠军|问鼎", research):
+        script = ask_model(
+            client,
+            sys_prompt + "\n⚠️ 上稿错误：你使用了'即将开打/即将开赛'等未来时态，但备忘中该事件已有明确赛果。"
+            "必须改用语已发生的事实（如'X队于X月X日夺冠'），严禁未来时态。",
+            user_prompt,
+            web=False,
+        )
+    return script
 
 
 def find_audio_url(value, key_hint=""):
