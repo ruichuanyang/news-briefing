@@ -217,6 +217,7 @@ def extract_sources(research: str) -> list[tuple[str, str]]:
             continue
         seen.add(key)
         domain = re.sub(r"^https?://(?:www\.)?", "", link).split("/")[0]
+        domain = re.sub(r"\?.*$", "", domain)  # 去掉 ?tracking 参数，避免显示脏域名
         urls.append((domain or "来源", link))
     return urls
 
@@ -232,6 +233,12 @@ def postprocess_script(script: str, research: str) -> str:
     script = re.sub(r"\s*```\s*$", "", script)
     # 截掉模型自带的资料来源部分
     head = re.split(r"(?:^|\n)#+\s*资料来源", script, maxsplit=1)[0].rstrip()
+    # 移除正文里残留的来源标记（来源统一在文末列出）：
+    #   [来源](url) / [来源](--) 空死链，以及 （来源：xxx）/ (来源：xxx) 中文括号标记
+    head = re.sub(r"\[来源\]\([^)]*\)", "", head)
+    head = re.sub(r"[（(]来源[：:][^）)]*[）)]", "", head)
+    head = re.sub(r"[ \t]{2,}", " ", head)
+    head = re.sub(r"\n{3,}", "\n\n", head).strip()
     sources = extract_sources(research)
     if not sources:
         return head
@@ -256,13 +263,14 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "绝不编造域名或猜测网址。\n"
         "5. 优先采用日期最新的条目；备忘条目已按发布时间从新到旧排列，最上方即最新。\n"
         "6. 凡同一事件若同时出现'赛前预告'与'赛后结果'，必须采用赛后结果；若最新结果已表明事件结束"
-        "（如'夺冠''决赛结束''冠军产生''X队胜出'），严禁使用'即将开打/即将开赛/将开打/开赛在即'等未来时态表述。"
+        "（如'夺冠''决赛结束''冠军产生''X队胜出'），严禁使用'即将开打/即将开赛/将开打/开赛在即'等未来时态表述。\n"
+        "7. 正文中不要写'[来源]'、'（来源）'之类的来源标记，所有来源由系统在文末统一列出；正文只叙述事实。"
     )
     user_prompt = (
         f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
         "正常语速约6分钟，绝不超过10分钟。\n\n"
         "写作要求：\n1. 用一个简洁开场串起全篇，按'市场（美股/黄金白银/科技/AI）—Dota2—文娱—深圳与科学'自然过渡。"
-        "其中黄金白银必须单独成段，写明品种、价格、单位、日期与来源（以深圳水贝行情优先）；"
+        "其中黄金白银必须单独成段，且必须先用'元/克'报出深圳水贝或上海金交所的黄金/白银批发行情价（如'足金约X元/克'），国际金价（美元/盎司）只能作为补充；严禁只报国际美元价而漏掉元/克行情价；"
         "美股必须报出主要指数点位或涨跌幅数字。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
         "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
         "4. 不要写'资料来源'小节，来源链接会由系统自动附加到文末。\n"
