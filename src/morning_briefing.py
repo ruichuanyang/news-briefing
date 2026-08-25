@@ -231,8 +231,8 @@ def postprocess_script(script: str, research: str) -> str:
     script = script.strip()
     script = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", script)
     script = re.sub(r"\s*```\s*$", "", script)
-    # 截掉模型自带的资料来源部分
-    head = re.split(r"(?:^|\n)#+\s*资料来源", script, maxsplit=1)[0].rstrip()
+    # 截掉模型自带的资料来源部分（兼容 “# 资料来源” 与 “[资料来源]” 两种写法）
+    head = re.split(r"(?:^|\n)[#\[]?\s*资料来源\s*\]?", script, maxsplit=1)[0].rstrip()
     # 移除正文里残留的来源标记（来源统一在文末列出）：
     #   [来源](url) / [来源](--) 空死链，以及 （来源：xxx）/ (来源：xxx) 中文括号标记
     head = re.sub(r"\[来源\]\([^)]*\)", "", head)
