@@ -309,7 +309,8 @@ def _expand_script(client: OpenAI, script: str, target_chars: int, now: datetime
         "你是“哥哥”的专属晨报主编，口吻与之前完全一致：开场叫“哥哥”，自然、有温度。\n"
         f"下面是一版草稿，长度偏短。请在【绝对不改动任何已有事实】的前提下把它扩写到约 {target_chars} 字："
         "只可补充背景、影响分析、为什么值得关注；不得新增未提及的具体数字、事件或来源；"
-        "保持 Markdown 格式，不要写资料来源小节，不要改变已有的数据与结论。"
+        f"扩写后总字数控制在 {target_chars} 字左右，且绝不能超过 {target_chars + 80} 字；"
+        "若已接近目标则只小幅补充。保持 Markdown 格式，不要写资料来源小节，不要改变已有的数据与结论。"
     )
     return ask_model(client, sys_prompt, "当前草稿：\n" + script, web=False)
 
