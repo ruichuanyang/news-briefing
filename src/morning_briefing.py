@@ -304,15 +304,30 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
 
 
 def _expand_script(client: OpenAI, script: str, target_chars: int, now: datetime) -> str:
-    """把过短的草稿扩写到目标字数：仅补充背景/影响分析，严禁新增未提及的事实。"""
+    """把过短的草稿适度扩写：每个栏目只补一句背景/影响，整体仅增加约 200 字。"""
     sys_prompt = (
-        "你是“哥哥”的专属晨报主编，口吻与之前完全一致：开场叫“哥哥”，自然、有温度。\n"
-        f"下面是一版草稿，长度偏短。请在【绝对不改动任何已有事实】的前提下把它扩写到约 {target_chars} 字："
-        "只可补充背景、影响分析、为什么值得关注；不得新增未提及的具体数字、事件或来源；"
-        f"扩写后总字数控制在 {target_chars} 字左右，且绝不能超过 {target_chars + 80} 字；"
-        "若已接近目标则只小幅补充。保持 Markdown 格式，不要写资料来源小节，不要改变已有的数据与结论。"
+        "你是“哥哥”的专属晨报主编，口吻不变：开场叫“哥哥”，自然、有温度。\n"
+        "下面是一版草稿。请在不改动任何已有事实的前提下，为【每个栏目】补充一句背景或影响分析"
+        "（说明为什么值得关注），使播报更充实；总体只在当前基础上增加 150-250 字，不要大段重写，"
+        f"不要超过 {target_chars} 字。保持 Markdown 格式，不写资料来源小节，不改变已有数据与结论。"
     )
     return ask_model(client, sys_prompt, "当前草稿：\n" + script, web=False)
+
+
+def _enforce_length(script: str, max_chars: int) -> str:
+    """代码层硬裁：若成稿超过上限，按句子边界截断到 max_chars 以内（GLM 长度不可信，必须兜底）。"""
+    if len(script) <= max_chars:
+        return script
+    # 以中英文句号为界切句，尽量在句子边界截断
+    parts = re.split(r"([。！？!?])", script)
+    out, total = [], 0
+    for i in range(0, len(parts) - 1, 2):
+        sent = parts[i] + (parts[i + 1] if i + 1 < len(parts) else "")
+        if total + len(sent) > max_chars and out:
+            break
+        out.append(sent)
+        total += len(sent)
+    return "".join(out).strip() + "…（今日播报到此）" if out else script[:max_chars]
 
 
 def personalize_script(script: str) -> str:
@@ -571,12 +586,10 @@ def main() -> None:
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
     client = chat_client()
     research = collect_research(client, config["topics"], now)
-    script = personalize_script(
-        postprocess_script(
-            write_script(client, research, int(config.get("target_chars", 1700)), now, config["topics"]),
-            research,
-        )
-    )
+    raw = write_script(client, research, int(config.get("target_chars", 1350)), now, config["topics"])
+    # 代码层硬裁：把成稿正文截断到目标字数以内（GLM 长度控制不可信），再走来源/称呼后处理
+    raw = _enforce_length(raw, int(config.get("target_chars", 1350)) + 80)
+    script = personalize_script(postprocess_script(raw, research))
     title = f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}"
     result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider")}
     if not args.dry_run:
