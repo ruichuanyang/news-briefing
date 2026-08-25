@@ -248,28 +248,36 @@ def postprocess_script(script: str, research: str) -> str:
     return head + "\n".join(lines)
 
 
-_BANNED_FUTURE = re.compile(r"即将开打|即将开赛|将开打|开赛在即|即将开赛|将开赛|即将举行|即将开")
+# 未来时态哨兵：赛事“即将开打”与游戏“即将发售/上线”是同一类过期预告陷阱。
+_BANNED_FUTURE = re.compile(
+    r"即将开打|即将开赛|将开打|开赛在即|即将开赛|将开赛|即将举行|即将开"
+    r"|即将发售|即将上线|即将公测|即将推出|即将开播|即将上映"
+)
+# 对应已发生结果的关键词（备忘里出现这些却用了未来时态 → 强制重生成）。
+_CONCLUDED = re.compile(r"夺冠|冠军产生|决赛结束|最终夺冠|捧起冠军|问鼎|正式发售|已正式上线|正式上线|大结局|完结|已发售|已经上线")
 
 
-def write_script(client: OpenAI, research: str, target_chars: int, now: datetime) -> str:
+def write_script(client: OpenAI, research: str, target_chars: int, now: datetime, topics: list[dict]) -> str:
+    section_list = "、".join(t.get("name", "") for t in topics if t.get("name"))
     sys_prompt = (
-        "你是中文广播新闻节目的资深主编。把研究备忘改写成一篇自然、克制、适合早晨收听的完整口播稿（Markdown）。\n"
+        "你是“哥哥”的专属晨报主编。这是给“哥哥”一个人的每日播报，没有别的听众，"
+        "语气要像亲密的人在清晨跟他说话——自然、克制、有温度，但不过分腻。\n"
+        "开场直接叫“哥哥”，绝不要写“各位听众”“听众朋友们”“大家好”这类面向大众的称呼。\n"
         "硬性要求：\n"
-        "1. 覆盖全部栏目：Dota2、美股、黄金白银、AI前沿、国内娱乐、国际娱乐、物理学前沿、深圳本地头条。"
-        "每个栏目都必须报道；只有备忘中标明'今日无可靠更新'的栏目才可一句话带过。\n"
+        f"1. 覆盖全部栏目：{section_list}。每个栏目都必须报道；只有备忘中标明'今日无可靠更新'的栏目才可一句话带过。\n"
         "2. 事实只可来自备忘；时间、价格、数字、名称必须与备忘逐字一致，禁止补数、改数；宁可写'暂无数据'。\n"
         "3. 严禁罗列备忘原文：禁止出现'｜'竖线分隔、禁止'标题｜日期｜内容'式清单，全部改写成连贯的广播语言。\n"
         "4. 文末'资料来源'小节：只逐字复制备忘中真实出现的链接（URL）并附来源名；备忘里没有链接的栏目不列入，"
         "绝不编造域名或猜测网址。\n"
         "5. 优先采用日期最新的条目；备忘条目已按发布时间从新到旧排列，最上方即最新。\n"
-        "6. 凡同一事件若同时出现'赛前预告'与'赛后结果'，必须采用赛后结果；若最新结果已表明事件结束"
-        "（如'夺冠''决赛结束''冠军产生''X队胜出'），严禁使用'即将开打/即将开赛/将开打/开赛在即'等未来时态表述。\n"
+        "6. 凡同一事件若同时出现'预热/前瞻/即将'与'已发生结果'，必须采用已发生结果；若最新结果已表明事件结束"
+        "（如'夺冠''决赛结束''冠军产生''正式发售''已上线''大结局'），严禁使用'即将开打/即将开赛/即将发售/即将上线/即将公测'等未来时态表述。\n"
         "7. 正文中不要写'[来源]'、'（来源）'之类的来源标记，所有来源由系统在文末统一列出；正文只叙述事实。"
     )
     user_prompt = (
         f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
-        "正常语速约6分钟，绝不超过10分钟。\n\n"
-        "写作要求：\n1. 用一个简洁开场串起全篇，按'市场（美股/黄金白银/科技/AI）—Dota2—文娱—深圳与科学'自然过渡。"
+        "正常语速约5分钟，绝不超过7分钟。\n\n"
+        "写作要求：\n1. 用一个简洁开场直接叫“哥哥”串起全篇，各栏目之间自然过渡，不要逐栏报菜单。"
         "其中黄金白银必须单独成段，且必须先用'元/克'报出深圳水贝或上海金交所的黄金/白银批发行情价（如'足金约X元/克'），国际金价（美元/盎司）只能作为补充；严禁只报国际美元价而漏掉元/克行情价；"
         "美股必须报出主要指数点位或涨跌幅数字。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
         "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
@@ -277,16 +285,27 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research
     )
     script = ask_model(client, sys_prompt, user_prompt, web=False)
-    # 兜底：备忘已有赛果，成稿却写“即将开打”——说明用了陈旧预告，强制重生成一次
-    if _BANNED_FUTURE.search(script) and re.search(r"夺冠|冠军产生|决赛结束|最终夺冠|捧起冠军|问鼎", research):
+    # 兜底：备忘已有“已发生结果”，成稿却写出未来时态——说明用了陈旧预告/预热，强制重生成一次
+    if _BANNED_FUTURE.search(script) and _CONCLUDED.search(research):
         script = ask_model(
             client,
-            sys_prompt + "\n⚠️ 上稿错误：你使用了'即将开打/即将开赛'等未来时态，但备忘中该事件已有明确赛果。"
-            "必须改用语已发生的事实（如'X队于X月X日夺冠'），严禁未来时态。",
+            sys_prompt + "\n⚠️ 上稿错误：你使用了'即将开打/即将发售/即将上线'等未来时态，但备忘中该事件已有明确结果。"
+            "必须改用语已发生的事实（如'X队于X月X日夺冠''游戏已于X月X日发售'），严禁未来时态。",
             user_prompt,
             web=False,
         )
     return script
+
+
+def personalize_script(script: str) -> str:
+    """把面向大众的称呼统一替换为对“哥哥”的专属口吻（GLM 指令遵循有限，代码兜底）。"""
+    s = script
+    # 听众类称呼 → 哥哥
+    s = re.sub(r"各位听众(?:朋友们?|朋友)?", "哥哥", s)
+    s = re.sub(r"听众朋友们?", "哥哥", s)
+    # 其他面向大众的开场 → 哥哥，
+    s = re.sub(r"^(?:大家好|观众朋友们?|亲爱的听众|听众朋友)[，！!。.\s]*", "哥哥，", s.strip())
+    return s.strip()
 
 
 def find_audio_url(value, key_hint=""):
@@ -534,7 +553,12 @@ def main() -> None:
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
     client = chat_client()
     research = collect_research(client, config["topics"], now)
-    script = postprocess_script(write_script(client, research, int(config.get("target_chars", 1300)), now), research)
+    script = personalize_script(
+        postprocess_script(
+            write_script(client, research, int(config.get("target_chars", 1700)), now, config["topics"]),
+            research,
+        )
+    )
     title = f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}"
     result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider")}
     if not args.dry_run:
