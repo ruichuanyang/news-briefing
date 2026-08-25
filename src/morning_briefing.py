@@ -234,6 +234,8 @@ def postprocess_script(script: str, research: str) -> str:
     2. 文末“资料来源”小节只保留研究备忘中真实出现的 URL，绝不保留模型编造的域名。
     """
     script = script.strip()
+    # 兜底：扩写步骤的 user_prompt 偶被 GLM 回显为成稿首行“当前草稿：”，此处剥离，避免被 TTS 念出。
+    script = re.sub(r"^\s*当前草稿[：:]\s*", "", script)
     script = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", script)
     script = re.sub(r"\s*```\s*$", "", script)
     # 截掉模型自带的资料来源部分（兼容 “# 资料来源” 与 “[资料来源]” 两种写法）
@@ -325,7 +327,9 @@ def _expand_script(client: OpenAI, script: str, target_chars: int, now: datetime
         "（说明为什么值得关注），使播报更充实；总体只在当前基础上增加 150-250 字，不要大段重写，"
         f"不要超过 {target_chars} 字。保持 Markdown 格式，不写资料来源小节，不改变已有数据与结论。"
     )
-    return ask_model(client, sys_prompt, "当前草稿：\n" + script, web=False)
+    # 注意：user_prompt 不要带“当前草稿：”之类字面标签，否则 GLM 会把标签回显进成稿、
+    # 被 TTS 原样念出。上下文已由 sys_prompt 说明“这是一版草稿”。
+    return ask_model(client, sys_prompt, "现有草稿如下，请按系统要求扩写：\n" + script, web=False)
 
 
 def personalize_script(script: str) -> str:
