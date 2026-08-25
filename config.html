@@ -29,6 +29,10 @@
   .sec-top { display: flex; gap: 8px; align-items: center; }
   .sec-top input { flex: 1; font-weight: 600; }
   .x { flex: 0 0 auto; width: 34px; height: 34px; border: none; border-radius: 9px; background: #fdecea; color: #c0392b; font-size: 18px; cursor: pointer; line-height: 1; }
+  .arrows { display: flex; flex-direction: column; gap: 3px; flex: 0 0 auto; }
+  .mv { width: 30px; height: 17px; border: none; border-radius: 6px; background: #eef1f5; color: #2b6cb0; font-size: 10px; cursor: pointer; line-height: 1; padding: 0; }
+  .mv:active { background: #dfe6ee; }
+  .mv:disabled { opacity: .3; cursor: default; }
   .sec-bottom { display: flex; gap: 12px; align-items: flex-end; margin-top: 10px; }
   .sec-bottom > div:first-child { width: 92px; }
   .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #1f2329; white-space: nowrap; margin: 0; }
@@ -167,6 +171,10 @@ function renderSections() {
       <div class="sec-grip" draggable="true" title="拖动我调整顺序">⠿</div>
       <div class="sec-top">
         <input type="text" data-k="name" data-i="${i}" value="${esc(t.name || "")}">
+        <div class="arrows">
+          <button class="mv" ${i === 0 ? "disabled" : ""} onclick="move(${i},-1)" title="上移">▲</button>
+          <button class="mv" ${i === CONFIG.topics.length - 1 ? "disabled" : ""} onclick="move(${i},1)" title="下移">▼</button>
+        </div>
         <button class="x" onclick="del(${i})" title="删除该板块">×</button>
       </div>
       <label>写作要点（告诉 AI 这个板块报什么）</label>
@@ -219,6 +227,14 @@ function renderSections() {
   });
 }
 function del(i) { CONFIG.topics.splice(i, 1); renderSections(); }
+function move(i, dir) {
+  collectInputs();
+  const j = i + dir;
+  if (j < 0 || j >= CONFIG.topics.length) return;
+  const arr = CONFIG.topics;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  renderSections();
+}
 function addSection() {
   CONFIG.topics.push({ name: "新板块", instructions: "报道该领域当日可靠、有新闻价值的动态。", search_query: "{short} 新闻", count: 4, enabled: true });
   renderSections();
