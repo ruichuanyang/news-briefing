@@ -1,7 +1,7 @@
 {
   "edition_name": "每日早报",
   "timezone": "Asia/Shanghai",
-  "target_chars": 1300,
+  "target_chars": 1350,
   "llm": {
     "provider": "zhipu",
     "model": "glm-4-flash",
