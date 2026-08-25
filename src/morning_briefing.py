@@ -278,7 +278,7 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
     user_prompt = (
         f"播出日期：{now:%Y年%m月%d日}。目标长度 {target_chars} 个汉字上下（上限 {target_chars + 120}），"
         "正常语速约5分钟，绝不超过7分钟。\n\n"
-        "写作要求：\n1. 用一个简洁开场直接叫“哥哥”串起全篇，各栏目之间自然过渡，不要逐栏报菜单。整体约5分钟（约1700-1900字），内容要充实，每栏2-3句。"
+        "写作要求：\n1. 用一个简洁开场直接叫“哥哥”串起全篇，各栏目之间自然过渡，不要逐栏报菜单。整体约5分钟（约{target_chars}字），内容要充实，每栏2-3句。"
         "其中黄金白银必须单独成段，且必须先用'元/克'报出深圳水贝或上海金交所的黄金/白银批发行情价（如'足金约X元/克'），国际金价（美元/盎司）只能作为补充；严禁只报国际美元价而漏掉元/克行情价；"
         "美股必须报出主要指数点位或涨跌幅数字。\n2. 新闻联播播报感：短句、具体、平稳；解释为什么值得关注，"
         "但不要夸张、营销或机械罗列。\n3. 保留必要的时间、价格、单位；英文名首次出现可括注。\n"
@@ -286,7 +286,7 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research
     )
     script = ask_model(client, sys_prompt, user_prompt, web=False)
-    # 兜底：备忘已有“已发生结果”，成稿却写出未来时态——说明用了陈旧预告/预热，强制重生成一次
+    # 兜底①：备忘已有“已发生结果”，成稿却写出未来时态——说明用了陈旧预告/预热，强制重生成一次
     if _BANNED_FUTURE.search(script) and _CONCLUDED.search(research):
         script = ask_model(
             client,
@@ -295,7 +295,23 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
             user_prompt,
             web=False,
         )
+    # 兜底②：GLM 常把稿件写得过短（无视目标字数）。低于目标则扩写，只补背景/影响，不新增事实。
+    attempts = 0
+    while len(script) < target_chars - 150 and attempts < 2:
+        script = _expand_script(client, script, target_chars, now)
+        attempts += 1
     return script
+
+
+def _expand_script(client: OpenAI, script: str, target_chars: int, now: datetime) -> str:
+    """把过短的草稿扩写到目标字数：仅补充背景/影响分析，严禁新增未提及的事实。"""
+    sys_prompt = (
+        "你是“哥哥”的专属晨报主编，口吻与之前完全一致：开场叫“哥哥”，自然、有温度。\n"
+        f"下面是一版草稿，长度偏短。请在【绝对不改动任何已有事实】的前提下把它扩写到约 {target_chars} 字："
+        "只可补充背景、影响分析、为什么值得关注；不得新增未提及的具体数字、事件或来源；"
+        "保持 Markdown 格式，不要写资料来源小节，不要改变已有的数据与结论。"
+    )
+    return ask_model(client, sys_prompt, "当前草稿：\n" + script, web=False)
 
 
 def personalize_script(script: str) -> str:
