@@ -1,7 +1,7 @@
 {
   "edition_name": "每日早报",
   "timezone": "Asia/Shanghai",
-  "target_chars": 1300,
+  "target_chars": 1700,
   "llm": {
     "provider": "zhipu",
     "model": "glm-4-flash",
@@ -13,10 +13,10 @@
   },
   "topics": [
     {
-      "name": "Dota 2",
-      "instructions": "赛事、版本、职业圈与重大社区动态；没有可靠进展时简述即可。",
-      "search_query": "{short} Dota2 最新赛事 战报 结果 新闻",
-      "count": 4
+      "name": "游戏与单机",
+      "instructions": "单机游戏、3A大作、PC/主机游戏的新作发售、评测、版本更新、厂商与行业动态；优先一手来源与权威游戏媒体。",
+      "search_query": "{short} 单机游戏 3A 新作 发售 评测 厂商 动态 新闻",
+      "count": 5
     },
     {
       "name": "美股",
