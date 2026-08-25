@@ -110,15 +110,20 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
         "content_size": "medium",
     }
     last_err = ""
-    for attempt in range(3):
+    # 免费/赠金账户搜索 API 有较低 QPS，突发会 429；用较长指数退避（15/30/60s）重试。
+    for attempt in range(5):
         try:
             response = requests.post(
                 "https://open.bigmodel.cn/api/paas/v4/web_search",
                 headers=headers, json=payload, timeout=60,
             )
-            if response.status_code == 429 or response.status_code >= 500:
+            if response.status_code == 429:
+                last_err = "HTTP 429 (rate limited)"
+                time.sleep(15 * (attempt + 1))
+                continue
+            if response.status_code >= 500:
                 last_err = f"HTTP {response.status_code}"
-                time.sleep(2 * (attempt + 1))
+                time.sleep(5 * (attempt + 1))
                 continue
             response.raise_for_status()
             data = response.json()
@@ -151,10 +156,10 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
                 # 过滤后为空说明只有旧闻，直接视为无可靠更新（重试也不会变新）
                 return results
             last_err = "empty result"
-            time.sleep(2 * (attempt + 1))
+            time.sleep(3 * (attempt + 1))
         except (requests.Timeout, requests.ConnectionError) as exc:
             last_err = str(exc)
-            time.sleep(2 * (attempt + 1))
+            time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"智谱 web_search 失败（{last_err}）")
 
 
