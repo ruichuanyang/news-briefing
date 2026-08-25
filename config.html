@@ -3,123 +3,111 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>晨报板块管理</title>
+<title>晨报设置</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-         background: #f5f6f8; color: #1f2329; line-height: 1.6; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
-  h1 { font-size: 21px; margin: 0 0 4px; }
-  .sub { color: #8a9099; font-size: 13px; margin-bottom: 18px; }
-  .card { background: #fff; border-radius: 16px; padding: 18px; box-shadow: 0 4px 18px rgba(0,0,0,.05); margin-bottom: 16px; }
-  .card h2 { font-size: 15px; margin: 0 0 14px; color: #2b6cb0; }
-  label { display: block; font-size: 13px; color: #5a6068; margin: 10px 0 4px; }
+         background: #f4f6f9; color: #1f2329; line-height: 1.6; -webkit-text-size-adjust: 100%; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 22px 16px 70px; }
+  h1 { font-size: 20px; margin: 0 0 3px; }
+  .sub { color: #8a9099; font-size: 12.5px; margin-bottom: 18px; }
+  .card { background: #fff; border-radius: 16px; padding: 16px; box-shadow: 0 3px 14px rgba(0,0,0,.05); margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; color: #2b6cb0; }
+  label { display: block; font-size: 12.5px; color: #6b7178; margin: 12px 0 5px; }
   input[type=text], input[type=number], textarea, select {
-    width: 100%; padding: 9px 10px; border: 1px solid #dfe3e8; border-radius: 9px;
-    font-size: 14px; font-family: inherit; background: #fbfcfd; }
-  textarea { resize: vertical; min-height: 58px; }
+    width: 100%; padding: 10px 11px; border: 1px solid #e1e5ea; border-radius: 10px;
+    font-size: 14px; font-family: inherit; background: #fbfcfd; color: #1f2329; }
+  textarea { resize: vertical; min-height: 56px; }
   input:focus, textarea:focus, select:focus { outline: none; border-color: #2b6cb0; background: #fff; }
-  .row { display: flex; gap: 12px; }
-  .row > div { flex: 1; }
-  .sec { border: 1px solid #eef0f3; border-radius: 12px; padding: 14px; margin-bottom: 12px; background: #fafbfc; }
-  .sec.disabled { opacity: .55; }
-  .sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .sec-head .name { font-weight: 600; font-size: 14px; }
-  .sec-actions { display: flex; gap: 6px; }
-  button { cursor: pointer; border: none; border-radius: 9px; padding: 9px 14px; font-size: 14px; font-family: inherit; }
-  .btn-primary { background: #2b6cb0; color: #fff; width: 100%; padding: 12px; font-size: 15px; }
+  .sec { border: 1px solid #eef0f3; border-radius: 12px; padding: 13px; margin-bottom: 11px; background: #fafbfc; }
+  .sec-top { display: flex; gap: 8px; align-items: center; }
+  .sec-top input { flex: 1; font-weight: 600; }
+  .x { flex: 0 0 auto; width: 34px; height: 34px; border: none; border-radius: 9px; background: #fdecea; color: #c0392b; font-size: 18px; cursor: pointer; line-height: 1; }
+  .sec-bottom { display: flex; gap: 12px; align-items: flex-end; margin-top: 10px; }
+  .sec-bottom > div:first-child { width: 92px; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #1f2329; white-space: nowrap; margin: 0; }
+  .chk input { width: auto; }
+  button { cursor: pointer; border: none; border-radius: 10px; font-size: 14px; font-family: inherit; }
+  .btn-primary { background: #2b6cb0; color: #fff; width: 100%; padding: 13px; font-size: 15px; margin-top: 4px; }
   .btn-primary:active { background: #245a93; }
-  .btn-ghost { background: #eef1f5; color: #1f2329; }
-  .btn-sm { padding: 5px 9px; font-size: 12.5px; }
-  .btn-danger { background: #fdecea; color: #c0392b; }
-  .hint { font-size: 12px; color: #9aa1a9; margin-top: 4px; }
+  .btn-ghost { background: #eef1f5; color: #1f2329; width: 100%; padding: 12px; margin-top: 9px; }
+  .btn-add { background: #eaf2fb; color: #2b6cb0; width: 100%; padding: 11px; margin-top: 2px; }
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  .range-row input[type=range] { flex: 1; }
+  .min-badge { flex: 0 0 auto; min-width: 86px; text-align: center; background: #eaf2fb; color: #2b6cb0;
+               border-radius: 9px; padding: 7px 8px; font-size: 13px; font-weight: 600; }
   .token-note { font-size: 12px; color: #9aa1a9; background: #fff8e6; border: 1px solid #ffe7a3;
-                padding: 9px 11px; border-radius: 9px; margin-bottom: 12px; }
-  #status { font-size: 13px; margin-top: 12px; padding: 10px 12px; border-radius: 9px; display: none; }
+                padding: 9px 11px; border-radius: 10px; margin-bottom: 12px; }
+  #status { font-size: 13px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; display: none; }
   .ok { background: #e8f6ee; color: #1e7a44; }
   .err { background: #fdecea; color: #c0392b; }
-  .muted { color: #9aa1a9; }
-  a { color: #2b6cb0; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>📰 晨报板块管理</h1>
-  <div class="sub">在这里调整每日晨报的栏目、搜索词与时长。修改会直接写回仓库并自动生效。</div>
+  <h1>晨报设置</h1>
+  <div class="sub">只调你关心的：朗读声音、播报时长、各板块内容。</div>
 
   <div class="token-note">
-    ⚠️ 保存 / 立即生成 需要你的 GitHub 个人访问令牌（PAT）。令牌仅保存在<strong>你当前浏览器</strong>本地（localStorage），只会发给 api.github.com，不会上传到任何第三方服务器。<br>
-    需要一个具备 <code>repo</code> 权限的 PAT：GitHub → Settings → Developer settings → Personal access tokens → 勾选 <code>repo</code>。
+    保存或立即生成需要你的 GitHub 令牌（PAT，含 <code>repo</code> 权限）。令牌只存在你这台浏览器本地，只发给 api.github.com。
   </div>
 
   <div class="card">
-    <h2>① 访问配置</h2>
-    <label>仓库（owner/name）</label>
-    <input type="text" id="repo" value="ruichuanyang/news-briefing">
-    <label>GitHub 令牌（PAT，含 repo 权限）</label>
-    <input type="password" id="token" placeholder="ghp_xxx 或 github_pat_xxx">
-    <div class="hint">输入后点“保存令牌到本机”，之后每次打开会自动填入。</div>
-    <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="saveToken()">保存令牌到本机</button>
+    <h2>朗读声音</h2>
+    <select id="voice">
+      <option value="zh-CN-XiaoxiaoNeural">晓晓（女声·温柔，推荐）</option>
+      <option value="zh-CN-YunxiNeural">云希（男声·清爽）</option>
+      <option value="zh-CN-YunyangNeural">云扬（男声·沉稳新闻感）</option>
+      <option value="zh-CN-XiaoyiNeural">晓伊（女声·甜美）</option>
+      <option value="zh-CN-YunjianNeural">云健（男声）</option>
+    </select>
   </div>
 
   <div class="card">
-    <h2>② 全局设置</h2>
-    <div class="row">
-      <div>
-        <label>刊名</label>
-        <input type="text" id="edition_name" placeholder="每日早报">
-      </div>
-      <div>
-        <label>语音</label>
-        <select id="voice">
-          <option value="zh-CN-XiaoxiaoNeural">晓晓（女声·推荐）</option>
-          <option value="zh-CN-YunxiNeural">云希（男声）</option>
-          <option value="zh-CN-YunyangNeural">云扬（男声·新闻感）</option>
-          <option value="zh-CN-XiaoyiNeural">晓伊（女声）</option>
-          <option value="zh-CN-YunjianNeural">云健（男声）</option>
-        </select>
-      </div>
+    <h2>播报时长</h2>
+    <div class="range-row">
+      <input type="range" id="duration" min="3" max="8" step="0.5">
+      <span class="min-badge" id="minBadge">约 5.0 分钟</span>
     </div>
-    <label>播报时长目标（字数）—— 约 <span id="minHint">?</span> 分钟</label>
-    <input type="number" id="target_chars" min="600" max="3000" step="50">
-    <div class="hint">按实测语速约 4.5 字/秒估算。想要 5 分钟填约 1350；想更长就调大。</div>
-    <label>时区</label>
-    <input type="text" id="timezone" value="Asia/Shanghai">
+    <label>拖动调整整体播报长度（约 3–8 分钟）。</label>
   </div>
 
   <div class="card">
-    <h2>③ 新闻板块</h2>
+    <h2>新闻板块</h2>
     <div id="sections"></div>
-    <button class="btn-ghost" style="width:100%;margin-top:4px" onclick="addSection()">＋ 添加板块</button>
-    <div class="hint">搜索词支持占位符：<code>{date}</code> = 今天（如 2026年08月25日），<code>{short}</code> = 月日（如 08月25日）。</div>
+    <button class="btn-add" onclick="addSection()">＋ 添加板块</button>
   </div>
 
-  <button class="btn-primary" onclick="saveAll()">保存修改并写回仓库</button>
-  <button class="btn-ghost" style="width:100%;margin-top:10px" onclick="runNow()">立即生成一期晨报</button>
+  <div class="card">
+    <h2>GitHub 令牌</h2>
+    <input type="password" id="token" placeholder="ghp_xxx 或 github_pat_xxx">
+    <label>用于保存修改 / 立即生成。点下方“记住令牌”后，下次自动填入。</label>
+    <button class="btn-ghost" style="margin-top:6px" onclick="saveToken()">记住令牌</button>
+  </div>
+
+  <button class="btn-primary" onclick="saveAll()">保存修改</button>
+  <button class="btn-ghost" onclick="runNow()">保存并立即生成一期</button>
   <div id="status"></div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const API = "https://api.github.com";
-const CPS = 4.48; // 实测 XiaoxiaoNeural 语速 字/秒
+const REPO = "ruichuanyang/news-briefing";
+const CPS = 4.48; // 实测 XiaoxiaoNeural 语速：字/秒
+let CONFIG = null;
 
-// ---- 本地令牌 ----
+// ---- UTF-8 安全的 base64 编解码（修掉旧版中文乱码的根因）----
+function b64decodeUtf8(b64) { return decodeURIComponent(escape(atob(b64.replace(/\s/g, "")))); }
+function b64encodeUtf8(str) { return btoa(unescape(encodeURIComponent(str))); }
+
 function saveToken() {
   const t = $("token").value.trim();
   if (!t) return showStatus("请输入令牌", false);
   localStorage.setItem("nb_token", t);
-  localStorage.setItem("nb_repo", $("repo").value.trim());
-  showStatus("令牌已保存到本机浏览器。", true);
+  showStatus("令牌已记住在本机浏览器。", true);
 }
-function loadToken() {
-  const t = localStorage.getItem("nb_token");
-  const r = localStorage.getItem("nb_repo");
-  if (t) $("token").value = t;
-  if (r) $("repo").value = r;
-}
+function loadToken() { const t = localStorage.getItem("nb_token"); if (t) $("token").value = t; }
 
-// ---- 状态提示 ----
 function showStatus(msg, ok) {
   const el = $("status");
   el.textContent = msg;
@@ -127,71 +115,50 @@ function showStatus(msg, ok) {
   el.style.display = "block";
 }
 
-// ---- 加载配置 ----
-let CONFIG = null;
 async function loadConfig() {
-  const repo = $("repo").value.trim();
   const token = $("token").value.trim();
   const headers = { "Accept": "application/vnd.github+json" };
   if (token) headers["Authorization"] = "Bearer " + token;
-  // 优先用令牌读（可写）；公开仓库无令牌也能读
-  const res = await fetch(`${API}/repos/${repo}/contents/config/topics.json`, { headers });
+  const res = await fetch(`https://api.github.com/repos/${REPO}/contents/config/topics.json`, { headers });
   if (!res.ok) throw new Error("读取配置失败：" + res.status);
   const data = await res.json();
-  CONFIG = JSON.parse(atob(data.content.replace(/\s/g, "")));
+  CONFIG = JSON.parse(b64decodeUtf8(data.content));
   CONFIG._sha = data.sha;
-  renderGlobal();
+  // 朗读声音
+  $("voice").value = (CONFIG.tts && CONFIG.tts.voice) || "zh-CN-XiaoxiaoNeural";
+  // 时长：由 target_chars 反推分钟
+  const mins = ((CONFIG.target_chars || 1300) / CPS / 60);
+  $("duration").value = Math.min(8, Math.max(3, Math.round(mins * 2) / 2)).toFixed(1);
+  updateBadge();
   renderSections();
 }
 
-function renderGlobal() {
-  $("edition_name").value = CONFIG.edition_name || "";
-  $("voice").value = (CONFIG.tts && CONFIG.tts.voice) || "zh-CN-XiaoxiaoNeural";
-  $("target_chars").value = CONFIG.target_chars || 1300;
-  $("timezone").value = CONFIG.timezone || "Asia/Shanghai";
-  updateMinHint();
+function updateBadge() {
+  const m = parseFloat($("duration").value || "5");
+  $("minBadge").textContent = "约 " + m.toFixed(1) + " 分钟";
 }
-function updateMinHint() {
-  const n = parseInt($("target_chars").value || "0", 10);
-  $("minHint").textContent = n ? (n / CPS / 60).toFixed(1) : "?";
-}
-$("target_chars").addEventListener("input", updateMinHint);
+$("duration").addEventListener("input", updateBadge);
 
-// ---- 板块渲染 ----
 function renderSections() {
   const box = $("sections");
   box.innerHTML = "";
-  CONFIG.topics.forEach((t, i) => {
+  (CONFIG.topics || []).forEach((t, i) => {
     const div = document.createElement("div");
-    div.className = "sec" + (t.enabled === false ? " disabled" : "");
+    div.className = "sec";
     div.innerHTML = `
-      <div class="sec-head">
-        <span class="name">#${i + 1} <span class="muted">${esc(t.name || "")}</span></span>
-        <span class="sec-actions">
-          <button class="btn-ghost btn-sm" onclick="move(${i},-1)">↑</button>
-          <button class="btn-ghost btn-sm" onclick="move(${i},1)">↓</button>
-          <button class="btn-danger btn-sm" onclick="del(${i})">删</button>
-        </span>
+      <div class="sec-top">
+        <input type="text" data-k="name" data-i="${i}" value="${esc(t.name || "")}">
+        <button class="x" onclick="del(${i})" title="删除该板块">×</button>
       </div>
-      <label>栏目名</label>
-      <input type="text" data-k="name" data-i="${i}" value="${esc(t.name || "")}">
-      <label>写作要点（给 AI 的指令）</label>
+      <label>写作要点（告诉 AI 这个板块报什么）</label>
       <textarea data-k="instructions" data-i="${i}">${esc(t.instructions || "")}</textarea>
-      <label>搜索词</label>
-      <input type="text" data-k="search_query" data-i="${i}" value="${esc(t.search_query || "")}">
-      <div class="row" style="margin-top:8px">
+      <div class="sec-bottom">
         <div>
-          <label>抓取条数</label>
+          <label>条数</label>
           <input type="number" min="1" max="10" data-k="count" data-i="${i}" value="${t.count || 4}">
         </div>
-        <div>
-          <label>&nbsp;</label>
-          <label style="display:flex;align-items:center;gap:6px;margin-top:9px">
-            <input type="checkbox" data-k="enabled" data-i="${i}" ${t.enabled === false ? "" : "checked"}> 启用该板块
-          </label>
-        </div>
-      </div>
-    `;
+        <label class="chk"><input type="checkbox" data-k="enabled" data-i="${i}" ${t.enabled === false ? "" : "checked"}> 启用</label>
+      </div>`;
     box.appendChild(div);
   });
   box.querySelectorAll("input,textarea").forEach(el => {
@@ -199,74 +166,54 @@ function renderSections() {
       const i = +el.dataset.i, k = el.dataset.k;
       let v = el.type === "checkbox" ? el.checked : el.value;
       if (k === "count") v = parseInt(v, 10) || 1;
-      if (k === "enabled") v = el.checked;
       CONFIG.topics[i][k] = v;
-      if (k === "name") el.closest(".sec").querySelector(".name .muted").textContent = v;
     });
   });
 }
-function move(i, d) {
-  const j = i + d;
-  if (j < 0 || j >= CONFIG.topics.length) return;
-  [CONFIG.topics[i], CONFIG.topics[j]] = [CONFIG.topics[j], CONFIG.topics[i]];
-  renderSections();
-}
 function del(i) { CONFIG.topics.splice(i, 1); renderSections(); }
 function addSection() {
-  CONFIG.topics.push({ name: "新板块", instructions: "报道该领域可靠、有当日价值的信息。", search_query: "{short} 新闻", count: 4, enabled: true });
+  CONFIG.topics.push({ name: "新板块", instructions: "报道该领域当日可靠、有新闻价值的动态。", search_query: "{short} 新闻", count: 4, enabled: true });
   renderSections();
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 
-// ---- 保存 ----
 async function saveAll() {
-  if (!CONFIG) return showStatus("请先等配置加载完成", false);
+  if (!CONFIG) return showStatus("请稍候，配置还在加载。", false);
   const token = $("token").value.trim();
-  if (!token) return showStatus("保存需要 GitHub 令牌（见①）。", false);
-  CONFIG.edition_name = $("edition_name").value.trim();
-  CONFIG.timezone = $("timezone").value.trim();
-  CONFIG.target_chars = parseInt($("target_chars").value, 10) || 1300;
+  if (!token) return showStatus("保存需要 GitHub 令牌（见下方输入框）。", false);
+  // 只改用户关心的字段，其余（搜索词、时区等）原样保留
+  CONFIG.target_chars = Math.round(parseFloat($("duration").value || "5") * CPS * 60);
   CONFIG.tts = CONFIG.tts || {};
   CONFIG.tts.provider = "edge";
   CONFIG.tts.voice = $("voice").value;
-  // 清理被禁用的板块标记（保留 enabled:false 以便恢复）
   const body = JSON.stringify(CONFIG, null, 2);
-  const repo = $("repo").value.trim();
-  const res = await fetch(`${API}/repos/${repo}/contents/config/topics.json`, {
+  const res = await fetch(`https://api.github.com/repos/${REPO}/contents/config/topics.json`, {
     method: "PUT",
-    headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
-               "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: "chore: update briefing config via 板块管理页",
-      content: btoa(unescape(encodeURIComponent(body))),
-      sha: CONFIG._sha,
-      branch: "main"
-    })
+    headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "chore: 更新晨报设置（板块管理页）", content: b64encodeUtf8(body), sha: CONFIG._sha, branch: "main" })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return showStatus("保存失败：" + (data.message || res.status), false);
   CONFIG._sha = data.content.sha;
-  showStatus("✅ 已保存。下次晨报（每日自动或点“立即生成”）即生效。", true);
+  showStatus("✅ 已保存，下次晨报生效。", true);
 }
 
-// ---- 立即生成 ----
 async function runNow() {
   const token = $("token").value.trim();
-  if (!token) return showStatus("生成需要 GitHub 令牌（见①）。", false);
-  const repo = $("repo").value.trim();
-  const res = await fetch(`${API}/repos/${repo}/actions/workflows/morning-briefing.yml/dispatches`, {
+  if (!token) return showStatus("生成需要 GitHub 令牌（见下方输入框）。", false);
+  await saveAll();
+  if (!$("status").className.includes("ok")) return;
+  const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/morning-briefing.yml/dispatches`, {
     method: "POST",
-    headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
-               "Content-Type": "application/json" },
+    headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
     body: JSON.stringify({ ref: "main" })
   });
-  if (!res.ok) return showStatus("触发失败：" + res.status + "（需 repo 权限的 PAT）", false);
-  showStatus("✅ 已触发一期生成，约 1–2 分钟后微信会收到推送。", true);
+  if (!res.ok) return showStatus("触发生成失败：" + res.status + "（需 repo 权限的 PAT）", false);
+  showStatus("✅ 已保存并触发一期生成，约 1–2 分钟后微信收到推送。", true);
 }
 
-// ---- 启动 ----
 loadToken();
-loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开，无需令牌；若要保存再填令牌）", false));
+loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开；要保存再填令牌）", false));
 </script>
 </body>
 </html>
