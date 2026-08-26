@@ -371,6 +371,37 @@ _BANNED_FUTURE = re.compile(
 _CONCLUDED = re.compile(r"夺冠|冠军产生|决赛结束|最终夺冠|捧起冠军|问鼎|正式发售|已正式上线|正式上线|大结局|完结|已发售|已经上线")
 
 
+def _write_with_filter_fallback(client: OpenAI, sys_prompt: str, user_prompt: str, research: str,
+                                target_chars: int, now: datetime, topics: list[dict]) -> str:
+    """首次写稿触发 GLM 输入过滤（400 code 1301）时，按“娱乐/社会类优先”逐个剔除研究备忘板块后重试，
+    直到通过或板块耗尽。黑名单预过滤无法覆盖所有触发词，此兜底保证整期晨报不因个别板块内容失败。"""
+    prio = {"国内娱乐": 0, "国际娱乐": 1, "深圳本地头条": 2}
+
+    def _blocks():
+        bs = [b for b in research.split("\n\n") if b.strip()]
+        return sorted(bs, key=lambda b: prio.get(b.split("：")[0].lstrip("- \t").strip(), 9))
+
+    cur_prompt, cur_research = user_prompt, research
+    last_err = None
+    for _ in range(10):
+        try:
+            return ask_model(client, sys_prompt, cur_prompt, web=False)
+        except Exception as exc:
+            if "1301" not in str(exc):
+                raise
+            last_err = exc
+            bs = _blocks()
+            if len(bs) <= 1:
+                break
+            removed = bs[0]  # 优先剔除最可能敏感的板块
+            cur_research = "\n\n".join(bs[1:])
+            cur_prompt = cur_prompt.replace(research, cur_research, 1)
+            research = cur_research
+            name = removed.split("：")[0].lstrip("- \t").strip()
+            print(f"[write] 输入过滤 1301，剔除板块「{name}」后重试（剩 {len(bs) - 1} 板块）", file=sys.stderr)
+    raise RuntimeError(f"写稿多次触发内容过滤：{last_err}")
+
+
 def write_script(client: OpenAI, research: str, target_chars: int, now: datetime, topics: list[dict]) -> str:
     section_list = "、".join(t.get("name", "") for t in topics if t.get("name"))
     sys_prompt = (
@@ -399,7 +430,7 @@ def write_script(client: OpenAI, research: str, target_chars: int, now: datetime
         "4. 不要写'资料来源'小节，来源链接会由系统自动附加到文末。\n"
         "5. 只输出可直接发送的 Markdown 稿件，不要写创作说明。\n\n研究备忘：\n" + research
     )
-    script = ask_model(client, sys_prompt, user_prompt, web=False)
+    script = _write_with_filter_fallback(client, sys_prompt, user_prompt, research, target_chars, now, topics)
     # 兜底①：备忘已有“已发生结果”，成稿却写出未来时态——说明用了陈旧预告/预热，强制重生成一次
     if _BANNED_FUTURE.search(script) and _CONCLUDED.search(research):
         script = ask_model(
