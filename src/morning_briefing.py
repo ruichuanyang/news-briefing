@@ -63,6 +63,7 @@ def ask_model(client: OpenAI, system: str, user: str, web: bool) -> str:
         model=LLM_MODEL,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0.25 if web else 0.65,
+        timeout=180,  # 写稿/扩写单次调用最长 3 分钟，防止 GLM 挂起拖死整期（SDK 默认 600s）
         **kwargs,
     )
     if web:
@@ -110,20 +111,25 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
         "content_size": "medium",
     }
     last_err = ""
-    # 免费/赠金账户搜索 API 有较低 QPS，突发会 429；用较长指数退避（15/30/60s）重试。
+    # 免费/赠金账户搜索 API 有较低 QPS，突发会 429；额度耗尽型 429 当月不恢复，只短退避重试 1 次。
     for attempt in range(5):
         try:
             response = requests.post(
                 "https://open.bigmodel.cn/api/paas/v4/web_search",
-                headers=headers, json=payload, timeout=60,
+                headers=headers, json=payload, timeout=20,
             )
             if response.status_code == 429:
+                # 429 多为“月额度耗尽”（当月不会恢复）或瞬时 QPS 限流。
+                # 只短退避重试 1 次防瞬时抖动；仍 429 立即放弃并切 Tavily 兜底，
+                # 避免 9 个板块 × 15/30/45/60/75s 长退避把整期 45 分钟烧光。
                 last_err = "HTTP 429 (rate limited)"
-                time.sleep(15 * (attempt + 1))
+                if attempt >= 1:
+                    break
+                time.sleep(3)
                 continue
             if response.status_code >= 500:
                 last_err = f"HTTP {response.status_code}"
-                time.sleep(5 * (attempt + 1))
+                time.sleep(2 * (attempt + 1))
                 continue
             response.raise_for_status()
             data = response.json()
@@ -159,7 +165,7 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
             time.sleep(3 * (attempt + 1))
         except (requests.Timeout, requests.ConnectionError) as exc:
             last_err = str(exc)
-            time.sleep(5 * (attempt + 1))
+            time.sleep(2 * (attempt + 1))
     raise RuntimeError(f"智谱 web_search 失败（{last_err}）")
 
 
@@ -180,7 +186,7 @@ def tavily_search(query: str, count: int = 5, now: datetime | None = None) -> li
         "include_raw_content": False,
     }
     try:
-        response = requests.post("https://api.tavily.com/search", json=payload, timeout=60)
+        response = requests.post("https://api.tavily.com/search", json=payload, timeout=20)
         response.raise_for_status()
         data = response.json()
     except Exception as exc:
@@ -501,7 +507,10 @@ def _synthesize_edge(text: str, voice: str) -> bytes:
             if isinstance(chunk, dict) and chunk.get("type") == "audio":
                 buf.extend(chunk.get("data") or b"")
         return bytes(buf)
-    return asyncio.run(_run())
+    try:
+        return asyncio.run(asyncio.wait_for(_run(), timeout=180))
+    except asyncio.TimeoutError:
+        raise RuntimeError("Edge TTS 合成超时（180s）")
 
 
 def spoken_version(script: str) -> str:
