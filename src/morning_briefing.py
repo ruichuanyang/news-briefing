@@ -279,7 +279,7 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> tuple
                 if kept >= 2:
                     break
         memo.append("\n".join(lines))
-    return "\n\n".join(memo)
+    return "\n\n".join(memo), provider_log
 
 
 def extract_sources(research: str) -> list[tuple[str, str]]:
