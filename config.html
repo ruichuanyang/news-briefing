@@ -55,7 +55,7 @@
   <div class="sub">只调你关心的：朗读声音、播报时长、各板块内容。</div>
 
   <div class="token-note">
-    保存或立即生成需要你的 GitHub 令牌（PAT，含 <code>repo</code> 权限）。令牌只存在你这台浏览器本地，只发给 api.github.com。
+    保存 / 立即生成需要 GitHub 授权。推荐点下方「用 GitHub 登录」一键授权，<b>不用复制任何令牌</b>；或用个人令牌 PAT 也行。凭证只存在你本机浏览器，只发给 api.github.com。
   </div>
 
   <div class="card">
@@ -86,9 +86,17 @@
   </div>
 
   <div class="card">
-    <h2>GitHub 令牌</h2>
+    <h2>GitHub 登录</h2>
+    <div class="token-note" style="margin-bottom:10px">
+      <b>方式一（推荐，免令牌）</b>：填一次 Client ID，点「用 GitHub 登录」，会打开你的 GitHub 让你点一下授权即可。Client ID 是公开标识，可放心填。
+    </div>
+    <label>GitHub Client ID</label>
+    <input type="text" id="clientId" placeholder="例如 Ov23lixxxxxxxxxxxx">
+    <button class="btn-primary" style="background:#24292f;margin-top:8px" onclick="oauthLogin()">用 GitHub 登录（免令牌）</button>
+    <div id="oauthHint" style="font-size:12px;color:#2b6cb0;margin-top:8px;display:none"></div>
+    <label style="margin-top:14px">方式二（备选）：个人令牌 PAT</label>
     <input type="password" id="token" placeholder="ghp_xxx 或 github_pat_xxx">
-    <label>用于保存修改 / 立即生成。点下方“记住令牌”后，下次自动填入。</label>
+    <label>含 <code>repo</code> 权限。点下方“记住令牌”后，下次自动填入。</label>
     <button class="btn-ghost" style="margin-top:6px" onclick="saveToken()">记住令牌</button>
   </div>
 
@@ -113,7 +121,64 @@ function saveToken() {
   localStorage.setItem("nb_token", t);
   showStatus("令牌已记住在本机浏览器。", true);
 }
-function loadToken() { const t = localStorage.getItem("nb_token"); if (t) $("token").value = t; }
+function loadToken() {
+  const t = localStorage.getItem("nb_token"); if (t) $("token").value = t;
+  const c = localStorage.getItem("nb_cid"); if (c) $("clientId").value = c;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// GitHub OAuth Device Flow：用户点一下授权即可，无需复制粘贴令牌
+async function oauthLogin() {
+  const cid = $("clientId").value.trim();
+  if (!cid) return showStatus("请先填写 GitHub Client ID（见卡片内说明，去 github.com 建一个 OAuth App 拿）。", false);
+  localStorage.setItem("nb_cid", cid);
+  let d;
+  try {
+    const r1 = await fetch("https://github.com/login/device/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ client_id: cid, scope: "repo" })
+    });
+    d = await r1.json();
+    if (!d.device_code) return showStatus("获取设备码失败：" + (d.error_description || d.error || "未知错误"), false);
+  } catch (e) { return showStatus("网络错误：" + e.message, false); }
+
+  window.open(d.verification_uri, "_blank");
+  const hint = $("oauthHint");
+  hint.style.display = "block";
+  hint.textContent = "已打开 GitHub 授权页，请输入代码：" + d.user_code + "（授权后本页会自动完成）";
+  showStatus("请在打开的 GitHub 页面输入代码 " + d.user_code + " 并点授权。", true);
+
+  let interval = (d.interval || 5) * 1000;
+  for (let i = 0; i < 60; i++) {
+    await sleep(interval);
+    let t;
+    try {
+      const r2 = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({
+          client_id: cid, device_code: d.device_code,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+        })
+      });
+      t = await r2.json();
+    } catch (e) { continue; }
+    if (t.access_token) {
+      localStorage.setItem("nb_token", t.access_token);
+      $("token").value = t.access_token;
+      hint.style.display = "none";
+      return showStatus("✅ 已用 GitHub 登录，现在可以直接保存 / 生成。", true);
+    }
+    if (t.error === "slow_down") interval += 5000;
+    else if (t.error !== "authorization_pending") {
+      hint.style.display = "none";
+      return showStatus("登录失败：" + (t.error_description || t.error), false);
+    }
+  }
+  hint.style.display = "none";
+  showStatus("登录超时，请重试。", false);
+}
 
 function showStatus(msg, ok) {
   const el = $("status");
@@ -209,7 +274,7 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&
 async function saveAll() {
   if (!CONFIG) return showStatus("请稍候，配置还在加载。", false);
   const token = $("token").value.trim();
-  if (!token) return showStatus("保存需要 GitHub 令牌（见下方输入框）。", false);
+  if (!token) return showStatus("请先「用 GitHub 登录」或在 PAT 框填令牌。", false);
   // 只改用户关心的字段，其余（搜索词、时区等）原样保留
   CONFIG.target_chars = Math.round(parseFloat($("duration").value || "5") * CPS * 60);
   CONFIG.tts = CONFIG.tts || {};
@@ -229,7 +294,7 @@ async function saveAll() {
 
 async function runNow() {
   const token = $("token").value.trim();
-  if (!token) return showStatus("生成需要 GitHub 令牌（见下方输入框）。", false);
+  if (!token) return showStatus("请先「用 GitHub 登录」或在 PAT 框填令牌。", false);
   await saveAll();
   if (!$("status").className.includes("ok")) return;
   const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/morning-briefing.yml/dispatches`, {
@@ -237,12 +302,12 @@ async function runNow() {
     headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
     body: JSON.stringify({ ref: "main" })
   });
-  if (!res.ok) return showStatus("触发生成失败：" + res.status + "（需 repo 权限的 PAT）", false);
+  if (!res.ok) return showStatus("触发生成失败：" + res.status + "（需 repo 权限的授权）", false);
   showStatus("✅ 已保存并触发一期生成，约 1–2 分钟后微信收到推送。", true);
 }
 
 loadToken();
-loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开；要保存再填令牌）", false));
+loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开；要保存请先「用 GitHub 登录」）", false));
 </script>
 </body>
 </html>
