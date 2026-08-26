@@ -15,7 +15,7 @@
   .card { background: #fff; border-radius: 16px; padding: 16px; box-shadow: 0 3px 14px rgba(0,0,0,.05); margin-bottom: 14px; }
   .card h2 { font-size: 14px; margin: 0 0 12px; color: #2b6cb0; }
   label { display: block; font-size: 12.5px; color: #6b7178; margin: 12px 0 5px; }
-  input[type=text], input[type=number], textarea, select {
+  input[type=text], input[type=number], input[type=password], textarea, select {
     width: 100%; padding: 10px 11px; border: 1px solid #e1e5ea; border-radius: 10px;
     font-size: 14px; font-family: inherit; background: #fbfcfd; color: #1f2329; }
   textarea { resize: vertical; min-height: 56px; }
@@ -42,8 +42,14 @@
   .range-row input[type=range] { flex: 1; }
   .min-badge { flex: 0 0 auto; min-width: 86px; text-align: center; background: #eaf2fb; color: #2b6cb0;
                border-radius: 9px; padding: 7px 8px; font-size: 13px; font-weight: 600; }
-  .token-note { font-size: 12px; color: #9aa1a9; background: #fff8e6; border: 1px solid #ffe7a3;
-                padding: 9px 11px; border-radius: 10px; margin-bottom: 12px; }
+  .token-note { font-size: 12.5px; color: #5a9bdc; background: #eef6fd; border: 1px solid #c7ddf9;
+                padding: 10px 11px; border-radius: 10px; margin-bottom: 12px; line-height: 1.55; }
+  .token-note b { color: #2b6cb0; }
+  .token-note ol { margin: 7px 0 0; padding-left: 18px; }
+  .token-note li { margin: 3px 0; }
+  .token-note code { background: #dcebfb; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .saved-tag { display: inline-block; font-size: 11px; color: #1e7a44; background: #e8f6ee;
+               padding: 2px 8px; border-radius: 6px; margin-left: 8px; vertical-align: middle; }
   #status { font-size: 13px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; display: none; }
   .ok { background: #e8f6ee; color: #1e7a44; }
   .err { background: #fdecea; color: #c0392b; }
@@ -53,10 +59,6 @@
 <div class="wrap">
   <h1>晨报设置</h1>
   <div class="sub">只调你关心的：朗读声音、播报时长、各板块内容。</div>
-
-  <div class="token-note">
-    保存 / 立即生成需要 GitHub 授权。推荐点下方「用 GitHub 登录」一键授权，<b>不用复制任何令牌</b>；或用个人令牌 PAT 也行。凭证只存在你本机浏览器，只发给 api.github.com。
-  </div>
 
   <div class="card">
     <h2>朗读声音</h2>
@@ -86,16 +88,20 @@
   </div>
 
   <div class="card">
-    <h2>GitHub 登录</h2>
-    <div class="token-note" style="margin-bottom:10px">
-      <b>方式一（推荐，免令牌）</b>：点「用 GitHub 登录」，会打开你的 GitHub 让你点一下授权即可。Client ID 已内置，无需填写。
+    <h2>GitHub 令牌 <span id="savedTag" class="saved-tag" style="display:none">已记住 ✓</span></h2>
+    <div class="token-note">
+      <b>① 去哪拿令牌（第一次才需要）：</b>
+      <ol>
+        <li>打开 <code>github.com/settings/tokens</code>（点头像 → Settings → Developer settings → Personal access tokens → Tokens (classic)）</li>
+        <li>点 <b>Generate new token (classic)</b></li>
+        <li>Note 填「晨报设置」，Expiration 选一个时长</li>
+        <li>勾选 <b>repo</b>（整项，仓库是公开的，勾这一个有就够）</li>
+        <li>拉到底点 <b>Generate token</b>，复制那串 <code>ghp_...</code> 或 <code>github_pat_...</code></li>
+      </ol>
+      <b>② 粘贴到下面</b>，点「记住令牌」——<b>只需这一次</b>，之后自动填入，不用再管。
     </div>
-    <button class="btn-primary" style="background:#24292f;margin-top:8px" onclick="oauthLogin()">用 GitHub 登录（免令牌）</button>
-    <div id="oauthHint" style="font-size:12px;color:#2b6cb0;margin-top:8px;display:none"></div>
-    <label style="margin-top:14px">方式二（备选）：个人令牌 PAT</label>
     <input type="password" id="token" placeholder="ghp_xxx 或 github_pat_xxx">
-    <label>含 <code>repo</code> 权限。点下方“记住令牌”后，下次自动填入。</label>
-    <button class="btn-ghost" style="margin-top:6px" onclick="saveToken()">记住令牌</button>
+    <button class="btn-ghost" style="margin-top:9px" onclick="saveToken()">记住令牌</button>
   </div>
 
   <button class="btn-primary" onclick="saveAll()">保存修改</button>
@@ -117,63 +123,11 @@ function saveToken() {
   const t = $("token").value.trim();
   if (!t) return showStatus("请输入令牌", false);
   localStorage.setItem("nb_token", t);
-  showStatus("令牌已记住在本机浏览器。", true);
+  $("savedTag").style.display = "inline-block";
+  showStatus("令牌已记住在本机浏览器，以后自动填入。", true);
 }
 function loadToken() {
-  const t = localStorage.getItem("nb_token"); if (t) $("token").value = t;
-}
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// GitHub OAuth Device Flow：用户点一下授权即可，无需复制粘贴令牌
-const CLIENT_ID = "Ov23liyoN1ZoQk4zuh9l";
-async function oauthLogin() {
-  const cid = CLIENT_ID;
-  let d;
-  try {
-    const r1 = await fetch("https://github.com/login/device/code", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ client_id: cid, scope: "repo" })
-    });
-    d = await r1.json();
-    if (!d.device_code) return showStatus("获取设备码失败：" + (d.error_description || d.error || "未知错误"), false);
-  } catch (e) { return showStatus("网络错误：" + e.message, false); }
-
-  window.open(d.verification_uri, "_blank");
-  const hint = $("oauthHint");
-  hint.style.display = "block";
-  hint.textContent = "已打开 GitHub 授权页，请输入代码：" + d.user_code + "（授权后本页会自动完成）";
-  showStatus("请在打开的 GitHub 页面输入代码 " + d.user_code + " 并点授权。", true);
-
-  let interval = (d.interval || 5) * 1000;
-  for (let i = 0; i < 60; i++) {
-    await sleep(interval);
-    let t;
-    try {
-      const r2 = await fetch("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({
-          client_id: cid, device_code: d.device_code,
-          grant_type: "urn:ietf:params:oauth:grant-type:device_code"
-        })
-      });
-      t = await r2.json();
-    } catch (e) { continue; }
-    if (t.access_token) {
-      localStorage.setItem("nb_token", t.access_token);
-      $("token").value = t.access_token;
-      hint.style.display = "none";
-      return showStatus("✅ 已用 GitHub 登录，现在可以直接保存 / 生成。", true);
-    }
-    if (t.error === "slow_down") interval += 5000;
-    else if (t.error !== "authorization_pending") {
-      hint.style.display = "none";
-      return showStatus("登录失败：" + (t.error_description || t.error), false);
-    }
-  }
-  hint.style.display = "none";
-  showStatus("登录超时，请重试。", false);
+  const t = localStorage.getItem("nb_token"); if (t) { $("token").value = t; $("savedTag").style.display = "inline-block"; }
 }
 
 function showStatus(msg, ok) {
@@ -188,13 +142,11 @@ async function loadConfig() {
   const headers = { "Accept": "application/vnd.github+json" };
   if (token) headers["Authorization"] = "Bearer " + token;
   const res = await fetch(`https://api.github.com/repos/${REPO}/contents/config/topics.json`, { headers });
-  if (!res.ok) throw new Error("读取配置失败：" + res.status);
+  if (!res.ok) throw new Error("读取配置失败：" + res.status + (token ? "" : "（填了令牌可自动读）"));
   const data = await res.json();
   CONFIG = JSON.parse(b64decodeUtf8(data.content));
   CONFIG._sha = data.sha;
-  // 朗读声音
   $("voice").value = (CONFIG.tts && CONFIG.tts.voice) || "zh-CN-XiaoxiaoNeural";
-  // 时长：由 target_chars 反推分钟
   const mins = ((CONFIG.target_chars || 1300) / CPS / 60);
   $("duration").value = Math.min(8, Math.max(3, Math.round(mins * 2) / 2)).toFixed(1);
   updateBadge();
@@ -270,8 +222,8 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&
 async function saveAll() {
   if (!CONFIG) return showStatus("请稍候，配置还在加载。", false);
   const token = $("token").value.trim();
-  if (!token) return showStatus("请先「用 GitHub 登录」或在 PAT 框填令牌。", false);
-  // 只改用户关心的字段，其余（搜索词、时区等）原样保留
+  if (!token) return showStatus("保存需要 GitHub 令牌（见上方卡片，填一次即可记住）。", false);
+  collectInputs();
   CONFIG.target_chars = Math.round(parseFloat($("duration").value || "5") * CPS * 60);
   CONFIG.tts = CONFIG.tts || {};
   CONFIG.tts.provider = "edge";
@@ -290,7 +242,7 @@ async function saveAll() {
 
 async function runNow() {
   const token = $("token").value.trim();
-  if (!token) return showStatus("请先「用 GitHub 登录」或在 PAT 框填令牌。", false);
+  if (!token) return showStatus("生成需要 GitHub 令牌（见上方卡片，填一次即可记住）。", false);
   await saveAll();
   if (!$("status").className.includes("ok")) return;
   const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/morning-briefing.yml/dispatches`, {
@@ -298,12 +250,12 @@ async function runNow() {
     headers: { "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
     body: JSON.stringify({ ref: "main" })
   });
-  if (!res.ok) return showStatus("触发生成失败：" + res.status + "（需 repo 权限的授权）", false);
+  if (!res.ok) return showStatus("触发生成失败：" + res.status + "（需 repo 权限的令牌）", false);
   showStatus("✅ 已保存并触发一期生成，约 1–2 分钟后微信收到推送。", true);
 }
 
 loadToken();
-loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开；要保存请先「用 GitHub 登录」）", false));
+loadConfig().catch(e => showStatus("加载失败：" + e.message + "（公开仓库可直接打开；要保存请先在上方填令牌）", false));
 </script>
 </body>
 </html>
