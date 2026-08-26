@@ -72,9 +72,9 @@
       "name": "深圳本地头条",
       "instructions": "交通、天气预警、公共服务、产业与城市重要新闻；优先政府和权威媒体。",
       "search_query": "{short} 深圳 新闻 天气 交通 民生",
-      "count": 5,
+      "count": 4,
       "enabled": true
     }
   ],
-  "_sha": "758b5497eb22274150f94a07f5b57fc84c53f8c6"
+  "_sha": "22f1d973610e926ac75dd30157ca689b9e72d479"
 }
