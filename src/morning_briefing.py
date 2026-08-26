@@ -163,11 +163,76 @@ def zhipu_search(query: str, count: int = 5, now: datetime | None = None) -> lis
     raise RuntimeError(f"智谱 web_search 失败（{last_err}）")
 
 
-def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
+def tavily_search(query: str, count: int = 5, now: datetime | None = None) -> list[dict]:
+    """Tavily 搜索 API 兜底：智谱搜索额度耗尽时自动启用。需 TAVILY_API_KEY 环境变量。
+    返回与 zhipu_search 完全一致的规范化结构 [{title, link, date, content}]。"""
+    key = os.getenv("TAVILY_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("Tavily 未配置（缺少 TAVILY_API_KEY 环境变量）")
+    payload = {
+        "api_key": key,
+        "query": query[:400],
+        "search_depth": "basic",
+        "topic": "news",
+        "days": 7,
+        "max_results": max(1, min(count, 10)),
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    try:
+        response = requests.post("https://api.tavily.com/search", json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        raise RuntimeError(f"Tavily 请求失败：{exc}")
+    results = []
+    for item in data.get("results") or []:
+        title = re.sub(r"\s+", " ", str(item.get("title", "") or "").strip())
+        content = re.sub(r"\s+", " ", str(item.get("content", "") or "").strip())
+        if not title and not content:
+            continue
+        results.append({
+            "title": title,
+            "link": str(item.get("url", "") or "").strip(),
+            "date": str(item.get("published_date", "") or "").strip(),
+            "content": content[:400],
+        })
+    if not results:
+        raise RuntimeError("Tavily 返回空结果")
+    # 与智谱一致：按发布日期倒序 + 14 天软时效过滤
+    results.sort(key=lambda r: _parse_date(r["date"]) or datetime(2000, 1, 1), reverse=True)
+    cutoff = (now.date() - timedelta(days=14)) if now else None
+    if cutoff:
+        results = [r for r in results if (d := _parse_date(r["date"])) is None or d.date() >= cutoff]
+    return results
+
+
+def web_search(query: str, count: int = 5, now: datetime | None = None) -> tuple[list[dict], str]:
+    """多源搜索路由器：优先智谱 web_search，失败（429/网络错/空结果）自动切 Tavily。
+    返回 (results, provider)，provider ∈ {'zhipu','tavily','none'}。"""
+    try:
+        res = zhipu_search(query, count=count, now=now)
+        if res:
+            print(f"[search] 命中智谱：{query[:32]}（{len(res)} 条）", file=sys.stderr)
+            return res, "zhipu"
+    except Exception as exc:
+        print(f"[search] 智谱失败，尝试 Tavily 兜底：{exc}", file=sys.stderr)
+    try:
+        res = tavily_search(query, count=count, now=now)
+        if res:
+            print(f"[search] 命中 Tavily：{query[:32]}（{len(res)} 条）", file=sys.stderr)
+            return res, "tavily"
+    except Exception as exc:
+        print(f"[search] Tavily 也失败：{exc}", file=sys.stderr)
+    return [], "none"
+
+
+def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> tuple[str, dict]:
+    provider_log: dict[str, str] = {}
     if LLM_PROVIDER == "qwen":
         # 旧路径：百炼 enable_search（保留回退）。
         topic_text = "\n".join(f"- {x['name']}：{x['instructions']}" for x in topics)
-        return ask_model(
+        research = ask_model(
             client,
             "你是一名严谨的中文新闻研究编辑。你必须主动联网搜索，不能以记忆或想象填补事实。"
             "先检索当日及过去36小时的信息，优先官方、原始论文、交易所、公司公告和主流媒体。"
@@ -177,6 +242,9 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
             "没有可靠新内容就明确写'今日无可靠更新'，绝不凑数。价格必须说明品种、币种、时间和数据源。",
             web=True,
         )
+        for t in topics:
+            provider_log[t["name"]] = "qwen-web"
+        return research, provider_log
     # 智谱路径：逐栏目显式联网搜索，直接读取顶层 web_search 字段的真实结果，
     # 不再依赖模型自述（GLM-4-Flash 常忽略搜索结果、凭训练数据编造）。
     memo = []
@@ -185,7 +253,8 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> str:
         query = (topic.get("search_query") or f"{name} 今日新闻").format(
             date=now.strftime("%Y年%m月%d日"), short=now.strftime("%m月%d日")
         )
-        results = zhipu_search(query, count=int(topic.get("count", 5)), now=now)
+        results, provider = web_search(query, count=int(topic.get("count", 5)), now=now)
+        provider_log[name] = provider
         lines = [f"- {name}：（以下按发布时间从新到旧排列，优先采用最上方条目）"]
         if not results:
             lines.append("  - 今日无可靠更新｜--｜联网搜索未返回可用结果｜--")
@@ -587,7 +656,7 @@ def main() -> None:
     globals()["TTS_CFG"] = tts_cfg or {"provider": "edge", "voice": "zh-CN-XiaoxiaoNeural"}
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
     client = chat_client()
-    research = collect_research(client, config["topics"], now)
+    research, search_log = collect_research(client, config["topics"], now)
     script = personalize_script(
         postprocess_script(
             write_script(client, research, int(config.get("target_chars", 1500)), now, config["topics"]),
@@ -595,7 +664,7 @@ def main() -> None:
         )
     )
     title = f"{config.get('edition_name', '每日早报')}｜{now:%m月%d日}"
-    result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider")}
+    result = {"generated_at": now.isoformat(), "research": research, "script": script, "llm": LLM_PROVIDER, "tts": TTS_CFG.get("provider"), "search_providers": search_log}
     if not args.dry_run:
         audio_bytes = synthesize(spoken_version(script))
         date = now.strftime("%Y%m%d")
