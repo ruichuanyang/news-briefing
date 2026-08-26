@@ -23,6 +23,7 @@ jobs:
       - name: 生成并推送晨报
         env:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python src/morning_briefing.py
