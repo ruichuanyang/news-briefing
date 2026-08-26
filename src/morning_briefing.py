@@ -213,21 +213,53 @@ def tavily_search(query: str, count: int = 5, now: datetime | None = None) -> li
     return results
 
 
+_SENSITIVE_KEYWORDS = (
+    # 暴恐与事故伤亡：晨报不播
+    "暴恐", "恐怖袭击", "爆炸", "枪击", "坠机", "遇难", "矿难", "踩踏", "枪杀", "人质",
+    # 政治敏感事件表述：避免播报风险
+    "政变", "弹劾", "骚乱", "示威", "游行", "台独", "港独", "藏独", "疆独", "法轮功",
+    # 色情低俗与毒品犯罪
+    "嫖娼", "性侵", "猥亵", "裸照", "艳照", "吸毒", "贩毒",
+    # 私生活八卦：晨报不传播未经证实传言
+    "出轨", "婚外情", "塌房", "绯闻", "恋情曝光",
+)
+
+
+def _contains_sensitive(text: str) -> bool:
+    """内容安全预过滤：命中敏感词库的条目丢弃，避免拼入研究备忘后触发 GLM 输入过滤（400 1301）。
+    宁可少报不可出事；只过滤明显不适宜播报的类别，避免误伤财经/科技/游戏正常新闻。"""
+    for kw in _SENSITIVE_KEYWORDS:
+        if kw in text:
+            return True
+    return False
+
+
 def web_search(query: str, count: int = 5, now: datetime | None = None) -> tuple[list[dict], str]:
     """多源搜索路由器：优先智谱 web_search，失败（429/网络错/空结果）自动切 Tavily。
+    两个来源的结果统一过内容安全预过滤（命中敏感词丢弃该条；全丢则该板块返回 none）。
     返回 (results, provider)，provider ∈ {'zhipu','tavily','none'}。"""
+    def _clean(res: list[dict]) -> list[dict]:
+        kept = [r for r in res if not _contains_sensitive(f"{r.get('title','')} {r.get('content','')}")]
+        if len(kept) != len(res):
+            print(f"[search] 内容安全过滤 {len(res) - len(kept)} 条", file=sys.stderr)
+        return kept
+
     try:
         res = zhipu_search(query, count=count, now=now)
         if res:
-            print(f"[search] 命中智谱：{query[:32]}（{len(res)} 条）", file=sys.stderr)
-            return res, "zhipu"
+            res = _clean(res)
+            if res:
+                print(f"[search] 命中智谱：{query[:32]}（{len(res)} 条）", file=sys.stderr)
+                return res, "zhipu"
     except Exception as exc:
         print(f"[search] 智谱失败，尝试 Tavily 兜底：{exc}", file=sys.stderr)
     try:
         res = tavily_search(query, count=count, now=now)
         if res:
-            print(f"[search] 命中 Tavily：{query[:32]}（{len(res)} 条）", file=sys.stderr)
-            return res, "tavily"
+            res = _clean(res)
+            if res:
+                print(f"[search] 命中 Tavily：{query[:32]}（{len(res)} 条）", file=sys.stderr)
+                return res, "tavily"
     except Exception as exc:
         print(f"[search] Tavily 也失败：{exc}", file=sys.stderr)
     return [], "none"
