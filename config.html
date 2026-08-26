@@ -88,10 +88,8 @@
   <div class="card">
     <h2>GitHub 登录</h2>
     <div class="token-note" style="margin-bottom:10px">
-      <b>方式一（推荐，免令牌）</b>：填一次 Client ID，点「用 GitHub 登录」，会打开你的 GitHub 让你点一下授权即可。Client ID 是公开标识，可放心填。
+      <b>方式一（推荐，免令牌）</b>：点「用 GitHub 登录」，会打开你的 GitHub 让你点一下授权即可。Client ID 已内置，无需填写。
     </div>
-    <label>GitHub Client ID</label>
-    <input type="text" id="clientId" placeholder="例如 Ov23lixxxxxxxxxxxx">
     <button class="btn-primary" style="background:#24292f;margin-top:8px" onclick="oauthLogin()">用 GitHub 登录（免令牌）</button>
     <div id="oauthHint" style="font-size:12px;color:#2b6cb0;margin-top:8px;display:none"></div>
     <label style="margin-top:14px">方式二（备选）：个人令牌 PAT</label>
@@ -123,15 +121,13 @@ function saveToken() {
 }
 function loadToken() {
   const t = localStorage.getItem("nb_token"); if (t) $("token").value = t;
-  const c = localStorage.getItem("nb_cid"); if (c) $("clientId").value = c;
 }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // GitHub OAuth Device Flow：用户点一下授权即可，无需复制粘贴令牌
+const CLIENT_ID = "Ov23liyoN1ZoQk4zuh9l";
 async function oauthLogin() {
-  const cid = $("clientId").value.trim();
-  if (!cid) return showStatus("请先填写 GitHub Client ID（见卡片内说明，去 github.com 建一个 OAuth App 拿）。", false);
-  localStorage.setItem("nb_cid", cid);
+  const cid = CLIENT_ID;
   let d;
   try {
     const r1 = await fetch("https://github.com/login/device/code", {
