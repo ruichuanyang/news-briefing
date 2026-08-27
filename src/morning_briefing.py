@@ -314,6 +314,89 @@ def collect_research(client: OpenAI, topics: list[dict], now: datetime) -> tuple
     return "\n\n".join(memo), provider_log
 
 
+# ---- 黄金价格单位/合理性校验与修正 ----
+_GOLD_GRAM_RANGE = (200, 2000)    # 元/克 合理区间（2024-2026 金交所 1000± / 足金饰品 ~1400，放宽防误伤）
+_GOLD_OZ_RANGE = (2000, 12000)    # 美元/盎司 合理区间（2024-2026 国际金价 2500-5000+）
+_RMB_PER_USD_RANGE = (6.0, 8.0)   # 隐含汇率合理区间（单位错位时换算比会远超此值）
+
+
+def _extract_prices(text: str) -> list[tuple[float, str]]:
+    """提取 (数字, 单位) 对，兼容三种写法：'4713.3元/克' / '4651美元/盎司' / '每盎司1921.6美元'。"""
+    pairs = []
+    for m in re.finditer(r"([\d,]+\.?\d*)\s*元/克", text):
+        pairs.append((float(m.group(1).replace(",", "")), "元/克"))
+    for m in re.finditer(r"([\d,]+\.?\d*)\s*美元/盎司|每盎司\s*([\d,]+\.?\d*)\s*美元", text):
+        v = m.group(1) or m.group(2)
+        pairs.append((float(v.replace(",", "")), "美元/盎司"))
+    return pairs
+
+
+def _is_price_clause(text: str) -> bool:
+    """子句是否为价格表述：含元/克，或含美元且带数字（兼容'每盎司1921.6美元'）。"""
+    return "元/克" in text or ("美元" in text and re.search(r"\d", text))
+
+
+def _prices_sane(pairs: list[tuple[float, str]]) -> bool:
+    """价格合理性：各数值须在合理区间，且元/克与美元/盎司换算的隐含汇率合理（防单位错位）。"""
+    per_gram = [v for v, u in pairs if u == "元/克"]
+    per_oz = [v for v, u in pairs if u == "美元/盎司"]
+    for g in per_gram:
+        if not (_GOLD_GRAM_RANGE[0] <= g <= _GOLD_GRAM_RANGE[1]):
+            return False
+        for oz in per_oz:
+            implied = g * 31.1035 / oz
+            if not (_RMB_PER_USD_RANGE[0] <= implied <= _RMB_PER_USD_RANGE[1]):
+                return False
+    for oz in per_oz:
+        if not (_GOLD_OZ_RANGE[0] <= oz <= _GOLD_OZ_RANGE[1]):
+            return False
+    return True
+
+
+def _first_oz_in_research(research: str) -> float | None:
+    """从研究备忘提取国际金价（美元/盎司，取最大值=主合约价），
+    兼容 '$ 4713.1 / ozt' 与 '4651美元/盎司' 与 '每盎司4713.3美元'。"""
+    vals = [float(m.group(1).replace(",", "")) for m in
+            re.finditer(r"\$\s*([\d,]+\.?\d*)\s*/\s*ozt", research)]
+    vals += [v for v, _ in _extract_prices(research) if _GOLD_OZ_RANGE[0] <= v <= _GOLD_OZ_RANGE[1]]
+    return max(vals) if vals else None
+
+
+def _fix_gold_price(script: str, research: str) -> str:
+    """黄金段落价格修正（GLM 常见单位错位/幻觉，如把 4713.3 美元/盎司写成 4713.3 元/克）：
+    只替换含价格的子句——国内元/克行情 research 有则保留，无则写"暂无可靠数据"；
+    国际金价一律用 research 中真实出现的美元/盎司值，剔除幻觉数字。"""
+    oz = _first_oz_in_research(research)
+    lines = script.split("\n")
+    out = []
+    fixed = False
+    for line in lines:
+        # 命中黄金相关表述（含"黄金和白银"段、足金/金价/水贝/金交所等写法）
+        if not fixed and any(k in line for k in ("黄金", "金价", "足金", "水贝", "金交所", "上金所")):
+            prices = _extract_prices(line)
+            if prices and not _prices_sane(prices):
+                # 按 逗号/句号/分号 拆短句，仅替换含价格的短句，保留"回落/避险"等分析句
+                parts = re.split(r"([，。；;])", line)
+                first = True
+                for i in range(0, len(parts), 2):
+                    if _is_price_clause(parts[i]):
+                        if first:
+                            if oz is not None:
+                                parts[i] = f"今日国内足金元/克行情暂无可靠数据，国际金价约为每盎司{oz:.1f}美元"
+                            else:
+                                parts[i] = "今日国内足金元/克行情暂无可靠数据"
+                            first = False
+                        else:
+                            parts[i] = ""  # 同一句内重复的价格短句删除，避免重复表述
+                line = "".join(parts)
+                line = re.sub(r"[，。；;]\s*[，。；;]", "。", line)
+                line = re.sub(r"^\s*[，。；;]\s*|\s*[，。；;]\s*$", "", line).strip()
+                fixed = True
+                print("[gold] 黄金价格单位/数值异常，已按 research 修正", file=sys.stderr)
+        out.append(line)
+    return "\n".join(out)
+
+
 def extract_sources(research: str) -> list[tuple[str, str]]:
     """从研究备忘中提取真实 URL，返回 [(域名, url)]，按出现顺序去重。"""
     urls: list[tuple[str, str]] = []
@@ -747,8 +830,11 @@ def main() -> None:
     client = chat_client()
     research, search_log = collect_research(client, config["topics"], now)
     script = personalize_script(
-        postprocess_script(
-            write_script(client, research, int(config.get("target_chars", 1500)), now, config["topics"]),
+        _fix_gold_price(
+            postprocess_script(
+                write_script(client, research, int(config.get("target_chars", 1500)), now, config["topics"]),
+                research,
+            ),
             research,
         )
     )
