@@ -2,9 +2,17 @@ name: 每日 AI 晨报
 
 on:
   schedule:
-    # 23:00 UTC = 北京时间次日 07:00，给检索、写稿和语音合成留出 1 小时。
+    # 23:00 UTC = 北京时间次日 07:00
     - cron: "0 23 * * *"
+    # 23:30 UTC = 北京时间次日 07:30（双保险：07:00 被 GitHub 跳过/延迟时补上；
+    # 脚本幂等——当天已发布则自动跳过，不会重复推送）
+    - cron: "30 23 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "强制重新生成（忽略当天已发布，覆盖当天晨报）"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -26,6 +34,7 @@ jobs:
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REGEN: ${{ inputs.force || 'false' }}
         run: python src/morning_briefing.py
       - name: 保存本次生成记录（仅 Actions 保留）
         if: always()
