@@ -715,6 +715,17 @@ def prune_old_audio(date: str, keep_days: int = 14) -> None:
         print(f"清理旧音频跳过：{exc}", file=sys.stderr)
 
 
+def _already_published(date: str) -> bool:
+    """幂等检测：gh-pages 分支已有当天 mp3 即视为已发布。
+    用于双 cron 保险（07:00/07:30 两次触发，第二次直接跳过）与漏跑补跑场景，
+    避免重复推送、浪费搜索额度。FORCE_REGEN=1 时由 main 跳过本检查。"""
+    try:
+        item = _gh_api("GET", f"contents/audio/{date}.mp3?ref=gh-pages")
+        return bool(item and item.get("name"))
+    except Exception:
+        return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="只生成文字，不合成或推送")
@@ -727,6 +738,12 @@ def main() -> None:
     globals()["LLM_MODEL"] = llm_cfg.get("model") or ("glm-4-flash" if LLM_PROVIDER == "zhipu" else "qwen3.6-flash")
     globals()["TTS_CFG"] = tts_cfg or {"provider": "edge", "voice": "zh-CN-XiaoxiaoNeural"}
     now = datetime.now(ZoneInfo(config.get("timezone", "Asia/Shanghai")))
+    # 幂等：当天晨报已发布则直接退出（双 cron / 补跑场景防重复推送、省额度）。
+    # dry-run 与 FORCE_REGEN=1 时跳过本检查，允许强制重新生成。
+    force = os.getenv("FORCE_REGEN", "").strip().lower() in ("1", "true", "yes")
+    if not args.dry_run and not force and _already_published(now.strftime("%Y%m%d")):
+        print(f"今日 {now:%Y%m%d} 晨报已生成，跳过本次运行（如需重新生成请用 workflow_dispatch 的 force 参数）", file=sys.stderr)
+        return
     client = chat_client()
     research, search_log = collect_research(client, config["topics"], now)
     script = personalize_script(
