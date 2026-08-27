@@ -321,19 +321,31 @@ _RMB_PER_USD_RANGE = (6.0, 8.0)   # 隐含汇率合理区间（单位错位时�
 
 
 def _extract_prices(text: str) -> list[tuple[float, str]]:
-    """提取 (数字, 单位) 对，兼容三种写法：'4713.3元/克' / '4651美元/盎司' / '每盎司1921.6美元'。"""
+    """提取 (数字, 单位) 对，兼容多种写法：
+    '4713.3元/克' / '4651美元/盎司' / '每盎司1921.6美元' / '每克约4713.1元'（人民币克价）。"""
     pairs = []
     for m in re.finditer(r"([\d,]+\.?\d*)\s*元/克", text):
         pairs.append((float(m.group(1).replace(",", "")), "元/克"))
     for m in re.finditer(r"([\d,]+\.?\d*)\s*美元/盎司|每盎司\s*([\d,]+\.?\d*)\s*美元", text):
         v = m.group(1) or m.group(2)
         pairs.append((float(v.replace(",", "")), "美元/盎司"))
+    # 人民币克价写法："每克约4713.1元" / "克价约4713元"（"元/千克"等带斜杠的不算，避免误伤银料）
+    for m in re.finditer(r"每克\s*约?\s*([\d,]+\.?\d*)\s*元|克价\s*约?\s*([\d,]+\.?\d*)\s*元", text):
+        v = m.group(1) or m.group(2)
+        pairs.append((float(v.replace(",", "")), "元/克"))
     return pairs
 
 
 def _is_price_clause(text: str) -> bool:
-    """子句是否为价格表述：含元/克，或含美元且带数字（兼容'每盎司1921.6美元'）。"""
-    return "元/克" in text or ("美元" in text and re.search(r"\d", text))
+    """子句是否为价格表述：含元/克；含美元且带数字（'每盎司1921.6美元'）；
+    或含"克/克价"且带"元"数字（'每克约4713.1元'）。"""
+    if "元/克" in text:
+        return True
+    if "美元" in text and re.search(r"\d", text):
+        return True
+    if ("每克" in text or "克价" in text) and "元" in text and re.search(r"\d", text):
+        return True
+    return False
 
 
 def _prices_sane(pairs: list[tuple[float, str]]) -> bool:
